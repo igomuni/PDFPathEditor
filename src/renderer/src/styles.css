@@ -1,0 +1,174 @@
+:root {
+  color-scheme: dark;
+  --bg: #2b2b2b;
+  --panel: #383838;
+  --border: #1f1f1f;
+  --text: #e6e6e6;
+  --muted: #a0a0a0;
+  --accent: #4a90d9;
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Yu Gothic UI', 'Segoe UI', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  user-select: none;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.toolbar,
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--panel);
+  flex: none;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.toolbar {
+  border-bottom: 1px solid var(--border);
+}
+
+.statusbar {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  gap: 16px;
+}
+
+.grow {
+  flex: 1;
+}
+
+.separator {
+  width: 1px;
+  height: 18px;
+  background: #555;
+}
+
+label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+button,
+input[type='number'] {
+  font: inherit;
+  color: var(--text);
+  background: #4a4a4a;
+  border: 1px solid #5c5c5c;
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+
+input[type='number'] {
+  width: 64px;
+}
+
+button:hover:not(:disabled) {
+  background: #575757;
+}
+
+button:disabled {
+  opacity: 0.45;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.workspace {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #525252;
+  touch-action: none;
+}
+
+.canvas svg {
+  display: block;
+}
+
+.page-shadow {
+  fill: rgba(0, 0, 0, 0.35);
+}
+
+.page-paper {
+  fill: #fff;
+}
+
+.page-border {
+  fill: none;
+  stroke: #1f1f1f;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  text-align: center;
+  padding: 24px;
+}
+
+.empty p {
+  margin: 0;
+}
+
+.hint {
+  color: var(--muted);
+}
+
+.busy {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  font-size: 15px;
+}
+
+.error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  background: #6b2a2a;
+  user-select: text;
+}
