@@ -1,0 +1,9 @@
+node_modules/
+dist/
+out/
+.DS_Store
+*.log
+.env
+# サンプルPDF等の大きな入力ファイルはコミットしない(取得元は samples/README.md)
+samples/*
+!samples/README.md
