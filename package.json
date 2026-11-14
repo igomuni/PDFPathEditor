@@ -6,9 +6,10 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "pnpm typecheck && electron-vite build",
+    "build": "pnpm typecheck && pnpm test && electron-vite build",
     "start": "electron-vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "node --test \"src/**/*.test.ts\""
   },
   "pnpm": {
     "onlyBuiltDependencies": [

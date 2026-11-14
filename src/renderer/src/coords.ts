@@ -1,6 +1,6 @@
 // PDF座標(pt、左下原点、y上向き)と SVG座標(pt、ページ左上原点、y下向き)の変換層。
 // モデルは常にPDF座標で持ち、表示のときだけここを通す。
-import type { Matrix, Rect } from '../../shared/model'
+import type { Matrix, PathNode, Rect } from '../../shared/model'
 
 export interface Point {
   x: number
@@ -80,4 +80,19 @@ export function centerPage(mediaBox: Rect, viewport: { width: number; height: nu
     y: (page.height - viewport.height / scale) / 2,
     scale
   }
+}
+
+/** 頂点列を SVG の path データにする。座標はそのまま(PDF座標)で、外側の変換に任せる */
+export function pathData(nodes: PathNode[], closed: boolean): string {
+  if (nodes.length === 0) return ''
+  const segment = (from: PathNode, to: PathNode): string => {
+    if (!from.out && !to.in) return `L${to.x} ${to.y}`
+    const c1 = from.out ?? [from.x, from.y]
+    const c2 = to.in ?? [to.x, to.y]
+    return `C${c1[0]} ${c1[1]} ${c2[0]} ${c2[1]} ${to.x} ${to.y}`
+  }
+  let d = `M${nodes[0].x} ${nodes[0].y}`
+  for (let i = 1; i < nodes.length; i++) d += segment(nodes[i - 1], nodes[i])
+  if (closed) d += `${segment(nodes.at(-1)!, nodes[0])}Z`
+  return d
 }

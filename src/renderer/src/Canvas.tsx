@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
-import type { DocObject, Page } from '../../shared/model'
+import type { DocObject, ImageObject, LayerKind, Page, PathObject } from '../../shared/model'
 import {
   centerPage,
   CSS_PX_PER_PT,
@@ -7,6 +7,7 @@ import {
   matrixToSvg,
   pageSize,
   panBy,
+  pathData,
   pdfToSvgMatrix,
   svgToPdf,
   viewportToSvg,
@@ -59,7 +60,34 @@ function useAssetUrl(asset: string): string | null {
   return url
 }
 
-function ObjectView({ object, scale }: { object: DocObject; scale: number }) {
+// 候補レイヤーは背景と見分けられるよう、モデルの色ではなく固定の色で描く(表示だけの上書き)
+const CANDIDATE_COLOR = '#e6007e'
+
+function PathView({ object, layerKind }: { object: PathObject; layerKind: LayerKind }) {
+  const isCandidate = layerKind === 'candidates'
+  return (
+    <path
+      d={pathData(object.nodes, object.closed)}
+      transform={matrixToSvg(object.transform)}
+      fill={object.fill === null ? 'none' : isCandidate ? CANDIDATE_COLOR : object.fill}
+      stroke={object.stroke === null ? 'none' : isCandidate ? CANDIDATE_COLOR : object.stroke}
+      strokeWidth={object.strokeWidth}
+      strokeDasharray={object.dash?.join(' ')}
+      strokeLinecap={object.lineCap}
+      data-object-id={object.id}
+    />
+  )
+}
+
+function ObjectView({ object, scale, layerKind }: { object: DocObject; scale: number; layerKind: LayerKind }) {
+  return object.type === 'path' ? (
+    <PathView object={object} layerKind={layerKind} />
+  ) : (
+    <ImageView object={object} scale={scale} />
+  )
+}
+
+function ImageView({ object, scale }: { object: ImageObject; scale: number }) {
   const url = useAssetUrl(object.asset)
   if (!url) return null
   const pxPerImagePixel = (Math.abs(object.transform[0]) / object.pixelWidth) * scale
@@ -244,7 +272,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({ page, on
                     {[...layer.objects]
                       .sort((a, b) => a.z - b.z)
                       .map((object) => (
-                        <ObjectView key={object.id} object={object} scale={view.scale} />
+                        <ObjectView key={object.id} object={object} scale={view.scale} layerKind={layer.kind} />
                       ))}
                   </g>
                 )

@@ -18,7 +18,9 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
           // PDFラスタライズ用 utility process のエントリ
-          'rasterize-worker': resolve(__dirname, 'src/main/rasterize-worker.ts')
+          'rasterize-worker': resolve(__dirname, 'src/main/rasterize-worker.ts'),
+          // Path候補抽出(Vectorizer)用 utility process のエントリ
+          'vectorize-worker': resolve(__dirname, 'src/main/vectorize-worker.ts')
         }
       }
     }

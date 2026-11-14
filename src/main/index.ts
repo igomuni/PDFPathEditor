@@ -1,8 +1,9 @@
 import { basename, extname, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type MenuItemConstructorOptions } from 'electron'
-import { IPC, type ImportOptions, type MenuCommand, type OpenedProject } from '../shared/ipc'
+import { IPC, type DetectTarget, type ImportOptions, type MenuCommand, type OpenedProject } from '../shared/ipc'
 import type { DocumentModel } from '../shared/model'
-import { importPdf, loadDocument, readAsset, saveDocument } from './project'
+import { detectCandidates, importPdf, loadDocument, readAsset, saveDocument } from './project'
+import { DEFAULT_VECTORIZER_ID } from '../shared/vectorizer'
 
 let mainWindow: BrowserWindow | null = null
 // 開いているプロジェクト。renderer から任意パスを受け取らないよう main 側で保持する
@@ -76,6 +77,10 @@ function buildMenu(): void {
       ]
     },
     {
+      label: '抽出',
+      submenu: [item('罫線を検出', 'CmdOrCtrl+D', 'detect-lines')]
+    },
+    {
       label: '表示',
       submenu: [
         item('拡大', 'CmdOrCtrl+=', 'zoom-in'),
@@ -142,6 +147,10 @@ function registerIpc(): void {
   )
 
   ipcMain.handle(IPC.readAsset, (_event, assetRel: string) => readAsset(requireProjectDir(), assetRel))
+
+  ipcMain.handle(IPC.detectCandidates, (_event, target: DetectTarget) =>
+    detectCandidates(requireProjectDir(), target, DEFAULT_VECTORIZER_ID)
+  )
 }
 
 void app.whenReady().then(() => {

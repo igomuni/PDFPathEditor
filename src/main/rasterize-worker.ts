@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { createCanvas } from '@napi-rs/canvas'
-import type { RasterizeReply, RasterizeRequest, RasterizeResult } from '../shared/ipc'
+import type { RasterizeRequest, RasterizeResult, WorkerReply } from '../shared/ipc'
 
 const POINTS_PER_INCH = 72
 
@@ -76,8 +76,8 @@ async function rasterize(req: RasterizeRequest): Promise<RasterizeResult> {
 
 process.parentPort.on('message', (event) => {
   rasterize(event.data as RasterizeRequest)
-    .then((result): RasterizeReply => ({ ok: true, result }))
-    .catch((err): RasterizeReply => ({
+    .then((result): WorkerReply<RasterizeResult> => ({ ok: true, result }))
+    .catch((err): WorkerReply<RasterizeResult> => ({
       ok: false,
       error: err instanceof Error ? err.message : String(err)
     }))

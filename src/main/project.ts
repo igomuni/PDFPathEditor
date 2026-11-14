@@ -4,8 +4,16 @@ import { createReadStream } from 'node:fs'
 import { chmod, copyFile, mkdir, readdir, readFile, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises'
 import { basename, join, resolve, sep } from 'node:path'
 import { utilityProcess } from 'electron'
-import type { ImportOptions, RasterizeReply, RasterizeRequest, RasterizeResult } from '../shared/ipc'
-import { DOCUMENT_VERSION, type DocumentModel, type Layer, type LayerKind } from '../shared/model'
+import type {
+  DetectTarget,
+  ImportOptions,
+  RasterizeRequest,
+  RasterizeResult,
+  VectorizeRequest,
+  WorkerReply
+} from '../shared/ipc'
+import { DOCUMENT_VERSION, type DocumentModel, type Layer, type LayerKind, type PathObject } from '../shared/model'
+import type { PathDraft } from '../shared/vectorizer'
 
 const DOCUMENT_FILE = 'document.json'
 const SUBDIRS = ['source', 'assets', 'fonts', 'exports'] as const
@@ -21,20 +29,19 @@ function sha256File(path: string): Promise<string> {
   })
 }
 
-function runRasterizer(request: RasterizeRequest): Promise<RasterizeResult> {
+/** utility process を起動して1件の処理を任せ、結果を受け取ったら終了させる */
+function runWorker<Request, Result>(script: string, serviceName: string, request: Request): Promise<Result> {
   return new Promise((resolvePromise, reject) => {
-    const child = utilityProcess.fork(join(__dirname, 'rasterize-worker.js'), [], {
-      serviceName: 'PDF Rasterizer'
-    })
+    const child = utilityProcess.fork(join(__dirname, script), [], { serviceName })
     let settled = false
-    child.once('message', (reply: RasterizeReply) => {
+    child.once('message', (reply: WorkerReply<Result>) => {
       settled = true
       child.kill()
       if (reply.ok) resolvePromise(reply.result)
       else reject(new Error(reply.error))
     })
     child.once('exit', (code) => {
-      if (!settled) reject(new Error(`ラスタライズ処理が異常終了しました(code ${code})`))
+      if (!settled) reject(new Error(`${serviceName} が異常終了しました(code ${code})`))
     })
     child.once('spawn', () => child.postMessage(request))
   })
@@ -98,7 +105,7 @@ async function buildProject(
   if (sha256 !== originalSha256) throw new Error('元PDFのコピーでハッシュが一致しませんでした')
 
   const assetRel = `assets/page-${String(pageNumber).padStart(4, '0')}-background-${dpi}dpi.png`
-  const raster = await runRasterizer({
+  const raster = await runWorker<RasterizeRequest, RasterizeResult>('rasterize-worker.js', 'PDF Rasterizer', {
     pdfPath: sourceAbs,
     pageNumber,
     dpi,
@@ -176,9 +183,29 @@ export async function saveDocument(projectDir: string, document: DocumentModel):
   await rename(temp, target)
 }
 
-export async function readAsset(projectDir: string, assetRel: string): Promise<Uint8Array> {
+function resolveAsset(projectDir: string, assetRel: string): string {
   const assetsRoot = resolve(projectDir, 'assets')
   const abs = resolve(projectDir, assetRel)
   if (!abs.startsWith(assetsRoot + sep)) throw new Error(`assets 外のパスは読めません: ${assetRel}`)
-  return readFile(abs)
+  return abs
+}
+
+export async function readAsset(projectDir: string, assetRel: string): Promise<Uint8Array> {
+  return readFile(resolveAsset(projectDir, assetRel))
+}
+
+/** 背景ラスターから Path 候補を抽出する。安定IDはここで振る */
+export async function detectCandidates(
+  projectDir: string,
+  target: DetectTarget,
+  vectorizerId: string
+): Promise<PathObject[]> {
+  const drafts = await runWorker<VectorizeRequest, PathDraft[]>('vectorize-worker.js', 'Vectorizer', {
+    vectorizerId,
+    pngPath: resolveAsset(projectDir, target.asset),
+    pixelWidth: target.pixelWidth,
+    pixelHeight: target.pixelHeight,
+    imageTransform: target.transform
+  })
+  return drafts.map((draft, index) => ({ id: `obj-${randomUUID()}`, ...draft, z: index }))
 }

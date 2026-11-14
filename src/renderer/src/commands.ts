@@ -1,4 +1,4 @@
-import type { DocumentModel, Layer } from '../../shared/model'
+import type { DocObject, DocumentModel, Layer } from '../../shared/model'
 import type { Command } from './history'
 
 function updateLayer(document: DocumentModel, layerId: string, patch: Partial<Layer>): DocumentModel {
@@ -28,5 +28,15 @@ export function setLayerVisible(layer: Layer, visible: boolean): Command {
     label: `「${layer.name}」の表示切替`,
     apply: (document) => updateLayer(document, layer.id, { visible }),
     revert: (document) => updateLayer(document, layer.id, { visible: before })
+  }
+}
+
+/** レイヤーの中身を丸ごと入れ替える(候補の再抽出など) */
+export function setLayerObjects(layer: Layer, objects: DocObject[], label: string): Command {
+  const before = layer.objects
+  return {
+    label,
+    apply: (document) => updateLayer(document, layer.id, { objects }),
+    revert: (document) => updateLayer(document, layer.id, { objects: before })
   }
 }

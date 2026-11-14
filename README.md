@@ -14,7 +14,8 @@ PDFを読み込み、Path / Text / Image を編集するElectronデスクトッ�
 ```sh
 pnpm install
 pnpm dev        # 開発起動(HMR)
-pnpm build      # 型チェック + ビルド(out/)
+pnpm test       # 単体テスト
+pnpm build      # 型チェック + テスト + ビルド(out/)
 pnpm start      # ビルド済みを起動
 ```
 
@@ -23,8 +24,14 @@ pnpm start      # ビルド済みを起動
 - ズーム: ⌘/Ctrl+ホイール、ピンチ、`+` / `-`、`1`(100%)、`5`(ページ全体)
 - パン: ホイール/2本指スクロール、中ボタンドラッグ、Space+ドラッグ
 
+### 現状(PoC マイルストーン2)
+- 「罫線を検出」(⌘D)で、背景ラスターから水平・垂直の罫線と点線を検出し、「自動抽出の候補」レイヤーに Path として入れる。候補はマゼンタで背景に重ねて表示する
+- 検出は候補を出すだけで、Undo/Redo できる。再実行すると候補を入れ替える
+- `pnpm test` で検出器の単体テストを実行する
+
 ### 構成
-- `src/main/` ファイルI/O、プロジェクト管理、PDFラスタライズ(utility process)
+- `src/main/` ファイルI/O、プロジェクト管理、PDFラスタライズと候補抽出(utility process)
+- `src/main/vectorize/` Vectorizer の実装(罫線検出)
 - `src/preload/` renderer に公開するAPI
 - `src/renderer/` React + SVGキャンバス
 - `src/shared/` ドキュメントモデルとIPCの型

@@ -41,8 +41,31 @@ export interface ImageObject extends ObjectBase {
   pixelHeight: number
 }
 
-// Path / Text は後続マイルストーンで追加する
-export type DocObject = ImageObject
+export interface PathNode {
+  x: number
+  y: number
+  /** ベジェの制御点(絶対座標)。直線の頂点では省略する */
+  in?: [number, number]
+  out?: [number, number]
+}
+
+/** 罫線は「2頂点の開いたPath + 線幅」で持つ(中心線表現) */
+export interface PathObject extends ObjectBase {
+  type: 'path'
+  nodes: PathNode[]
+  closed: boolean
+  /** CSS/PDF 共通で扱える #rrggbb。なしは null */
+  fill: string | null
+  stroke: string | null
+  /** 線幅(pt) */
+  strokeWidth: number
+  /** 破線パターン(pt)。[線, 隙間, ...]。最初の頂点から始まる。実線は null */
+  dash: number[] | null
+  lineCap: 'butt' | 'round' | 'square'
+}
+
+// Text は後続マイルストーンで追加する
+export type DocObject = ImageObject | PathObject
 
 export interface Layer {
   id: string

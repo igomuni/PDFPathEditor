@@ -1,10 +1,11 @@
-import type { DocumentModel } from './model'
+import type { DocumentModel, ImageObject, Matrix } from './model'
 
 export const IPC = {
   importPdf: 'project:import-pdf',
   openProject: 'project:open',
   saveDocument: 'project:save-document',
   readAsset: 'project:read-asset',
+  detectCandidates: 'project:detect-candidates',
   menuCommand: 'menu:command'
 } as const
 
@@ -27,6 +28,7 @@ export type MenuCommand =
   | 'save'
   | 'undo'
   | 'redo'
+  | 'detect-lines'
   | 'zoom-in'
   | 'zoom-out'
   | 'zoom-fit'
@@ -49,6 +51,17 @@ export interface RasterizeResult {
   permissions: number[] | null
 }
 
-export type RasterizeReply =
-  | { ok: true; result: RasterizeResult }
-  | { ok: false; error: string }
+
+/** 候補抽出の対象にする画像(背景ラスター) */
+export type DetectTarget = Pick<ImageObject, 'asset' | 'transform' | 'pixelWidth' | 'pixelHeight'>
+
+export interface VectorizeRequest {
+  vectorizerId: string
+  pngPath: string
+  pixelWidth: number
+  pixelHeight: number
+  /** 画像オブジェクトの変換行列(単位正方形 → PDF座標) */
+  imageTransform: Matrix
+}
+
+export type WorkerReply<T> = { ok: true; result: T } | { ok: false; error: string }

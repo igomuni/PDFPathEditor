@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { DEFAULT_IMPORT_DPI, DEFAULT_IMPORT_PAGE, type MenuCommand } from '../../shared/ipc'
 import { Canvas, type CanvasHandle, type CanvasStatus } from './Canvas'
-import { setLayerOpacity, setLayerVisible } from './commands'
+import { setLayerObjects, setLayerOpacity, setLayerVisible } from './commands'
 import { store, useStore } from './store'
 
 function errorMessage(err: unknown): string {
@@ -22,6 +22,7 @@ export function App() {
   const dirty = document !== savedDocument
   const page = document?.pages[0] ?? null
   const background = page?.layers.find((layer) => layer.kind === 'background') ?? null
+  const candidates = page?.layers.find((layer) => layer.kind === 'candidates') ?? null
 
   const run = useCallback(async (label: string, task: () => Promise<void>) => {
     setBusy(label)
@@ -64,6 +65,26 @@ export function App() {
     [run]
   )
 
+  const detectLines = useCallback(
+    () =>
+      run('罫線を検出中…', async () => {
+        const current = store.getState().document?.pages[0]
+        const image = current?.layers
+          .find((layer) => layer.kind === 'background')
+          ?.objects.find((object) => object.type === 'image')
+        const target = current?.layers.find((layer) => layer.kind === 'candidates')
+        if (!image || !target) return
+        const paths = await window.api.detectCandidates({
+          asset: image.asset,
+          transform: image.transform,
+          pixelWidth: image.pixelWidth,
+          pixelHeight: image.pixelHeight
+        })
+        store.execute(setLayerObjects(target, paths, '罫線を検出'))
+      }),
+    [run]
+  )
+
   useEffect(() => {
     const handlers: Record<MenuCommand, () => void> = {
       'import-pdf': () => void importPdf(),
@@ -71,13 +92,14 @@ export function App() {
       save: () => void save(),
       undo: () => store.undo(),
       redo: () => store.redo(),
+      'detect-lines': () => void detectLines(),
       'zoom-in': () => canvasRef.current?.zoomIn(),
       'zoom-out': () => canvasRef.current?.zoomOut(),
       'zoom-fit': () => canvasRef.current?.zoomFit(),
       'zoom-100': () => canvasRef.current?.zoom100()
     }
     return window.api.onMenuCommand((command) => handlers[command]())
-  }, [importPdf, openProject, save])
+  }, [importPdf, openProject, save, detectLines])
 
   useEffect(() => {
     const name = projectDir ? projectDir.split(/[\\/]/).pop() : null
@@ -155,6 +177,20 @@ export function App() {
               />
             </label>
             <span className="separator" />
+            <button onClick={() => void detectLines()} disabled={busy !== null} title="背景ラスターから罫線・枠の候補を抽出 (⌘D)">
+              罫線を検出
+            </button>
+            {candidates && (
+              <label>
+                <input
+                  type="checkbox"
+                  checked={candidates.visible}
+                  onChange={(e) => store.execute(setLayerVisible(candidates, e.target.checked))}
+                />
+                候補
+              </label>
+            )}
+            <span className="separator" />
             <button onClick={() => canvasRef.current?.zoomOut()} title="縮小 (-)">
               −
             </button>
@@ -201,6 +237,7 @@ export function App() {
                 ? `x ${status.cursorPdf.x.toFixed(2)} pt, y ${status.cursorPdf.y.toFixed(2)} pt`
                 : 'x —, y —'}
             </span>
+            {candidates && <span>候補 {candidates.objects.length} 件</span>}
             <span className="grow" />
             <span>
               {document.source.originalFileName} p.{page.sourcePageNumber}/{document.source.pageCount}
