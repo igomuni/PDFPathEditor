@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "node --test \"src/**/*.test.ts\"",
     "fonts": "node scripts/fetch-fonts.ts",
+    "e2e": "node scripts/e2e/smoke.mjs",
     "ocr:build": "mkdir -p resources/bin && swiftc -O native/vision-ocr/main.swift -o resources/bin/vision-ocr"
   },
   "pnpm": {

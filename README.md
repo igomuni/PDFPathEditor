@@ -80,7 +80,8 @@ pnpm start      # ビルド済みを起動
 - `src/main/export/` PDF / SVG / JSON の出力と差分検証
 - `src/main/review/` 確認用データの書き出し(要確認箇所の洗い出し)
 - `native/vision-ocr/` macOS Vision を呼ぶ Swift ヘルパー
-- `scripts/` フォント取得スクリプト
+- `scripts/` フォント取得スクリプト、実アプリの自動確認(`scripts/e2e/`、`pnpm e2e <プロジェクトフォルダ>`)
+- `docs/` 設計メモ(`design.md`)、課題一覧(`backlog.md`)、修正ファイルの形式(`corrections-format.md`)
 - `src/preload/` renderer に公開するAPI
 - `src/renderer/` React + SVGキャンバス
 - `src/shared/` ドキュメントモデルとIPCの型
