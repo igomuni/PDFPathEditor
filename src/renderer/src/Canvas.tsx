@@ -20,6 +20,7 @@ import {
   type Point,
   type View
 } from './coords'
+import { dragDelta } from './drag'
 import { isVisible, revealRect } from './objectList'
 import { store, type Selection } from './store'
 import { isVertical, verticalChars } from '../../shared/vertical'
@@ -324,6 +325,18 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
   const [marquee, setMarquee] = useState<{ from: Point; to: Point } | null>(null)
   const fittedPageId = useRef<string | null>(null)
   const drag = useRef<{ pointerId: number; lastX: number; lastY: number } | null>(null)
+  /** オブジェクトや頂点のドラッグ移動。applied は、すでにモデルへ反映した移動量(pt) */
+  const move = useRef<{
+    pointerId: number
+    start: Point
+    ids: readonly string[]
+    node: Selection['node']
+    applied: Point
+    moved: boolean
+    /** 動かさずに離したとき、この1つだけの選択にする(複数選択の中の1つをクリックした場合) */
+    collapseTo: string | null
+  } | null>(null)
+  const [moving, setMoving] = useState(false)
 
   // 選択・編集できるのは、表示中でロックされていないレイヤーのオブジェクトだけ
   const editableObjects = useMemo(
@@ -525,17 +538,36 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     const nodeEl = target.closest<SVGElement>('[data-node-index]')
     if (nodeEl) {
       const objectId = nodeEl.dataset.nodeObjectId!
-      store.select(selection.ids.includes(objectId) ? selection.ids : [objectId], {
-        objectId,
-        index: Number(nodeEl.dataset.nodeIndex)
-      })
+      const node = { objectId, index: Number(nodeEl.dataset.nodeIndex) }
+      const ids = selection.ids.includes(objectId) ? selection.ids : [objectId]
+      store.select(ids, node)
+      // 頂点のドラッグ: その頂点を動かす(水平・垂直の線は向きを保つ。§3-18)
+      e.currentTarget.setPointerCapture(e.pointerId)
+      move.current = { pointerId: e.pointerId, start: localPoint(e), ids, node, applied: { x: 0, y: 0 }, moved: false, collapseTo: null }
       return
     }
     const objectId = target.closest<SVGElement>('[data-object-id]')?.dataset.objectId
     if (objectId && editableObjects.some((object) => object.id === objectId)) {
-      if (!e.shiftKey) store.select([objectId])
-      else if (selection.ids.includes(objectId)) store.select(selection.ids.filter((id) => id !== objectId))
-      else store.select([...selection.ids, objectId])
+      if (e.shiftKey) {
+        // Shift+クリックは選択の足し引きだけ(ドラッグは始めない)
+        if (selection.ids.includes(objectId)) store.select(selection.ids.filter((id) => id !== objectId))
+        else store.select([...selection.ids, objectId])
+        return
+      }
+      // 選択済みのものをつかんだら選択全体を、そうでなければそれだけを選んで動かす
+      const inSelection = selection.ids.includes(objectId)
+      const ids = inSelection ? selection.ids : [objectId]
+      if (!inSelection || selection.node) store.select(ids)
+      e.currentTarget.setPointerCapture(e.pointerId)
+      move.current = {
+        pointerId: e.pointerId,
+        start: localPoint(e),
+        ids,
+        node: null,
+        applied: { x: 0, y: 0 },
+        moved: false,
+        collapseTo: inSelection && ids.length > 1 ? objectId : null
+      }
       return
     }
     // 何もない場所: 範囲選択を始める(動かさずに離せば選択解除)
@@ -554,6 +586,23 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       setView((v) => v && panBy(v, -dx, -dy))
     }
     const p = localPoint(e)
+    const m = move.current
+    if (m && m.pointerId === e.pointerId && view) {
+      if (!m.moved && Math.hypot(p.x - m.start.x, p.y - m.start.y) < CLICK_SLOP_PX) return
+      if (!m.moved) {
+        m.moved = true
+        setMoving(true)
+      }
+      // 始点からの移動量を出し、反映済みとの差だけを動かす(1回のドラッグは1つの履歴にまとまる)
+      const total = dragDelta(m.start, p, view.scale, e.shiftKey)
+      const dx = total.x - m.applied.x
+      const dy = total.y - m.applied.y
+      const document = store.getState().document
+      if (document && (dx !== 0 || dy !== 0)) {
+        store.execute(m.node ? moveNode(document, m.node.objectId, m.node.index, dx, dy) : moveObjects(document, m.ids, dx, dy))
+        m.applied = total
+      }
+    }
     if (marquee) setMarquee({ from: marquee.from, to: p })
     if (view) setCursorPdf(toPdf(view, p))
   }
@@ -562,6 +611,13 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     if (drag.current?.pointerId === e.pointerId) {
       drag.current = null
       setPanning(false)
+    }
+    const m = move.current
+    if (m && m.pointerId === e.pointerId) {
+      move.current = null
+      setMoving(false)
+      if (m.moved) store.sealHistory()
+      else if (m.collapseTo) store.select([m.collapseTo])
     }
     if (marquee && view) {
       const { from, to } = marquee
@@ -584,11 +640,16 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       drag.current = null
       setPanning(false)
     }
+    if (move.current?.pointerId === e.pointerId) {
+      move.current = null
+      setMoving(false)
+      store.sealHistory()
+    }
     setMarquee(null)
   }
 
   const { width: pageWidth, height: pageHeight } = pageSize(page.mediaBox)
-  const cursor = panning ? 'grabbing' : spaceHeld ? 'grab' : 'default'
+  const cursor = panning ? 'grabbing' : spaceHeld ? 'grab' : moving ? 'move' : 'default'
   const background = page.layers.filter((layer) => layer.kind === 'background')
   const foreground = page.layers.filter((layer) => layer.kind !== 'background')
 
