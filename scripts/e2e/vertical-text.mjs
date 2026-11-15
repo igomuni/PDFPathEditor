@@ -48,6 +48,11 @@ try {
   const reread = textsOf(page).filter((text) => text.meta.reread)
   console.log('     読み直した Text:', reread.map((text) => `${text.text}${text.writingMode === 'vertical' ? '(縦)' : ''}`).join(' / '))
   check('枠の読み直しで、縦書きと横書きの候補ができる', reread.some((text) => text.meta.reread === 'vertical' && text.writingMode === 'vertical') && reread.some((text) => text.meta.reread === 'horizontal'), `${reread.length} 件`)
+  // 読み落としの拾い直し: 星(★)は形から Text にする
+  const picked = textsOf(page).filter((text) => text.meta.missed)
+  const starTexts = picked.filter((text) => text.text === '★')
+  console.log('     拾い直した Text:', picked.map((text) => text.text).join(' '))
+  check('星(★)を Text として拾う', starTexts.length === 1, starTexts.map((text) => `${text.fontSize}pt (${text.transform[4]}, ${text.transform[5]})`).join(' / '))
   // 丸囲みの文字: ①〜㊿ とカタカナは1つの Text、51 以上は数字の Text と丸の Path
   const objects = page.layers.flatMap((layer) => layer.objects)
   const circledTexts = objects.filter((object) => object.type === 'text' && object.meta.circled !== undefined)

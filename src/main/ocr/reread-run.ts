@@ -13,7 +13,7 @@ import type { DetectedLine } from '../vectorize/line-detector'
 import { recognize } from './engines'
 import { cleanText, fitText, type InkMetrics } from './postprocess'
 import { readGrid } from './grid-read'
-import { normalizeMissedText } from './missed'
+import { isStarShape, normalizeMissedText } from './missed'
 import { findCellPx, splitCell, type PixelRect, type RereadItem } from './reread'
 
 export interface RereadContext {
@@ -68,6 +68,12 @@ const MISSED_BAR_MAX_HEIGHT_PX = 10
 // 拾い直す字の大きさの範囲(ページの文字の大きさの中央値に対する比)
 const MISSED_MIN_SIZE_RATIO = 0.55
 const MISSED_MAX_SIZE_RATIO = 1.5
+// 星(★): 形で決める。大きさ(画素)の範囲と、採用の条件(ふつうの字より厳しくする)
+// ふつうの字の大きさの星は OCR が読むので、ここでは大きいものだけを扱う(小さいまとまりは、字の一部を星と取り違えやすい)
+const STAR_MIN_SIZE_PX = 40
+const STAR_MAX_SIZE_PX = 160
+const STAR_MIN_COVERAGE = 0.9
+const STAR_MAX_EXCESS = 0.2
 const round = (value: number, digits: number): number => Math.round(value * 10 ** digits) / 10 ** digits
 
 interface Placed {
@@ -367,10 +373,15 @@ export async function rereadCells(context: RereadContext, drafts: readonly TextD
   const covered = dilateMask(toMask(after.canvas, context.inkThreshold), width, height, COVER_RADIUS_PX)
   const missed = new Uint8Array(width * height)
   for (let i = 0; i < missed.length; i++) if (ink[i] && !covered[i]) missed[i] = 1
-  const spots = groupInk(missed, width, height, { mergeRadius: MISSED_MERGE_RADIUS_PX, minInk: MISSED_MIN_INK, rowTolerance: 30 }).filter(
-    (group) => group.x1 - group.x0 < MISSED_MAX_SIZE_PX && group.y1 - group.y0 < MISSED_MAX_SIZE_PX
+  const groups = groupInk(missed, width, height, { mergeRadius: MISSED_MERGE_RADIUS_PX, minInk: MISSED_MIN_INK, rowTolerance: 30 })
+  // 星(★)は様式の目印として大きく印字される。OCR は読まないので、形(isStarShape)で候補にして、描いた字形と比べて決める
+  const stars = groups.filter((group) =>
+    isStarShape(group.x1 - group.x0 + 1, group.y1 - group.y0 + 1, group.ink, STAR_MIN_SIZE_PX, STAR_MAX_SIZE_PX)
   )
-  if (spots.length === 0) return reread
+  const spots = groups.filter(
+    (group) => !stars.includes(group) && group.x1 - group.x0 < MISSED_MAX_SIZE_PX && group.y1 - group.y0 < MISSED_MAX_SIZE_PX
+  )
+  if (spots.length === 0 && stars.length === 0) return reread
 
   const boxOf = (group: (typeof spots)[number]): PixelRect => ({ x0: group.x0, y0: group.y0, x1: group.x1 + 1, y1: group.y1 + 1 })
   /** 横棒(記入欄の区切りの「ー」)。OCR は単独の横棒を読まないので、形で決める */
@@ -443,7 +454,7 @@ export async function rereadCells(context: RereadContext, drafts: readonly TextD
   const picked: TextDraft[] = []
   const sizes = reread.map((draft) => draft.fontSize).sort((p, q) => p - q)
   const typicalSize = sizes.length > 0 ? sizes[sizes.length >> 1] : 8
-  const tryAdd = (group: (typeof spots)[number], text: string, confidence: number, byWidth: boolean): void => {
+  const tryAdd = (group: (typeof spots)[number], text: string, confidence: number, byWidth: boolean, star = false): void => {
     const box = boxOf(group)
     const metrics = measure(text)
     const count = [...text].length
@@ -457,7 +468,7 @@ export async function rereadCells(context: RereadContext, drafts: readonly TextD
     if (!fit || fit.fontSize < MISSED_MIN_FONT_PX) return
     // ページのふつうの文字の大きさから外れるものは、字ではない(点線のかけら、罫線の切れ端、図形の一部など)
     const sizePt = fit.fontSize / pxPerPt
-    if (sizePt < MISSED_MIN_SIZE_RATIO * typicalSize || sizePt > MISSED_MAX_SIZE_RATIO * typicalSize) return
+    if (!star && (sizePt < MISSED_MIN_SIZE_RATIO * typicalSize || sizePt > MISSED_MAX_SIZE_RATIO * typicalSize)) return
     const draft: TextDraft = {
       ...base,
       meta: { ocr: context.engineId, confidence: round(confidence, 2), missed: true },
@@ -467,10 +478,11 @@ export async function rereadCells(context: RereadContext, drafts: readonly TextD
       letterSpacing: round(fit.letterSpacing / pxPerPt, 2)
     }
     // 読んだ字を描いて、元のインクと重なるときだけ採用する(字の一部を別の字として読んだものを入れないため)
-    if (evaluate(draft).excess > MAX_EXCESS_FOR_NEW || coverage(draft, box) < MISSED_MIN_COVERAGE) return
+    if (evaluate(draft).excess > (star ? STAR_MAX_EXCESS : MAX_EXCESS_FOR_NEW) || coverage(draft, box) < (star ? STAR_MIN_COVERAGE : MISSED_MIN_COVERAGE)) return
     picked.push(draft)
   }
   for (const group of spots) if (isBar(group)) tryAdd(group, 'ー', 1, true)
+  for (const group of stars) tryAdd(group, '★', 1, false, true)
   toRead.forEach((group, i) => {
     const text = normalizeMissedText(texts[i].text)
     if (text && texts[i].confidence >= context.minConfidence) tryAdd(group, text, texts[i].confidence, false)

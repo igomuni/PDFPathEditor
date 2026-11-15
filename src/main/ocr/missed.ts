@@ -16,3 +16,14 @@ export function normalizeMissedText(raw: string): string | null {
   // かな・漢字・数字と、様式に出てくる記号だけを受け付ける。英字や「|」「■」「'」などは、罫線や図形のかけらを読んだものが多い
   return MISSED_ALLOWED.test(normalized) ? normalized : null
 }
+
+/**
+ * インクのまとまりが、塗りつぶした星(★)らしい形か。外接矩形がほぼ正方形で、その 3 割ほどが塗られている。
+ * (正五角形の星は、外接矩形の約 33% を占める。)ここでは候補を絞るだけで、採用は描いた字形との重なりで決める。
+ */
+export function isStarShape(width: number, height: number, ink: number, minSize: number, maxSize: number): boolean {
+  if (width < minSize || height < minSize || width > maxSize || height > maxSize) return false
+  const aspect = width / height
+  const fill = ink / (width * height)
+  return aspect >= 0.85 && aspect <= 1.25 && fill >= 0.24 && fill <= 0.42
+}
