@@ -88,6 +88,11 @@ export interface TextObject extends ObjectBase {
   letterSpacing: number
   fill: string
   align: 'left' | 'center' | 'right'
+  /**
+   * 組む向き。省略は横書き。縦書きでは、原点が1字目の仮想ボディの上辺の中央になり、
+   * 1字ずつ正立で下へ積む(src/shared/vertical.ts)。align は left = 上端、center = 中央、right = 下端が原点
+   */
+  writingMode?: 'horizontal' | 'vertical'
   /** 出力時に文字を輪郭Pathとして描く(見た目の再現用)。false なら実フォントのTextとして出力する */
   outline: boolean
 }

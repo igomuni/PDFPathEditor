@@ -9,6 +9,7 @@ import type { ReviewExportResult } from '../shared/corrections'
 import { BUNDLED_FONTS } from '../shared/fonts'
 import type { ExportRequest, WorkerReply } from '../shared/ipc'
 import type { DocObject, Rect, TextObject } from '../shared/model'
+import { isVertical, verticalChars, verticalLocalBox } from '../shared/vertical'
 import { canvasToGray, loadRaster } from './raster'
 import { dilateMask, groupInk } from './review/uncovered'
 import { assetPath, pageLabel } from './safe-paths'
@@ -103,9 +104,18 @@ async function exportReview(req: ExportRequest): Promise<ReviewExportResult> {
   const registered = new Map<string, string | null>()
   const drawText = (ctx: SKRSContext2D, text: TextObject, alias: string, offsetX: number, offsetY: number): void => {
     ctx.font = `${text.fontSize * pxPerPt}px "${alias}"`
+    ctx.textBaseline = 'alphabetic'
+    if (isVertical(text)) {
+      // 縦書き: 1字ずつ中央揃えで下へ積む(canvas では縦書き用の字形にできないので、括弧などは横向きのまま)
+      ctx.letterSpacing = '0px'
+      ctx.textAlign = 'center'
+      for (const item of verticalChars(text)) {
+        ctx.fillText(item.char, px(text.transform[4]) - offsetX, py(text.transform[5]) + item.baseline * pxPerPt - offsetY)
+      }
+      return
+    }
     ctx.letterSpacing = `${text.letterSpacing * pxPerPt}px`
     ctx.textAlign = text.align
-    ctx.textBaseline = 'alphabetic'
     ctx.fillText(text.text, px(text.transform[4]) - offsetX, py(text.transform[5]) - offsetY)
   }
   const all = whiteCanvas(width, height)
@@ -131,6 +141,7 @@ async function exportReview(req: ExportRequest): Promise<ReviewExportResult> {
       fontSize: text.fontSize,
       letterSpacing: text.letterSpacing,
       align: text.align,
+      writingMode: text.writingMode ?? 'horizontal',
       x: text.transform[4],
       y: text.transform[5],
       role: text.role,
@@ -148,11 +159,24 @@ async function exportReview(req: ExportRequest): Promise<ReviewExportResult> {
     all.ctx.font = `${text.fontSize * pxPerPt}px "${alias}"`
     all.ctx.letterSpacing = `${text.letterSpacing * pxPerPt}px`
     all.ctx.textAlign = text.align
-    const m = all.ctx.measureText(text.text)
-    const x0 = Math.floor(px(text.transform[4]) - m.actualBoundingBoxLeft) - 2
-    const y0 = Math.floor(py(text.transform[5]) - m.actualBoundingBoxAscent) - 2
-    const w = Math.ceil(m.actualBoundingBoxLeft + m.actualBoundingBoxRight) + 4
-    const h = Math.ceil(m.actualBoundingBoxAscent + m.actualBoundingBoxDescent) + 4
+    let x0: number
+    let y0: number
+    let w: number
+    let h: number
+    if (isVertical(text)) {
+      // 縦書きは外形(仮想ボディを積んだ範囲)を測る範囲にする
+      const [bx0, by0, bx1, by1] = verticalLocalBox(text)
+      x0 = Math.floor(px(text.transform[4] + bx0)) - 2
+      y0 = Math.floor(py(text.transform[5] + by1)) - 2
+      w = Math.ceil((bx1 - bx0) * pxPerPt) + 4
+      h = Math.ceil((by1 - by0) * pxPerPt) + 4
+    } else {
+      const m = all.ctx.measureText(text.text)
+      x0 = Math.floor(px(text.transform[4]) - m.actualBoundingBoxLeft) - 2
+      y0 = Math.floor(py(text.transform[5]) - m.actualBoundingBoxAscent) - 2
+      w = Math.ceil(m.actualBoundingBoxLeft + m.actualBoundingBoxRight) + 4
+      h = Math.ceil(m.actualBoundingBoxAscent + m.actualBoundingBoxDescent) + 4
+    }
     if (w <= 4 || h <= 4 || w * h > 4_000_000) return row
     // 透明のままだと全面がインクと判定されるので、白地に描く
     const { canvas: single, ctx } = whiteCanvas(w, h)

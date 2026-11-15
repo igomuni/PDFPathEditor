@@ -2,6 +2,7 @@
 import { createWriteStream } from 'node:fs'
 import PDFDocument from 'pdfkit'
 import type { DocumentModel, PathObject, TextObject } from '../../shared/model'
+import { isVertical, verticalChars } from '../../shared/vertical'
 import type { FontBook } from './fonts'
 import { exportedObjects, isDrawn, type LayoutText } from './layout'
 
@@ -55,15 +56,20 @@ function drawText(pdf: Pdf, object: TextObject, book: FontBook, layout: LayoutTe
   } else {
     // ローカル座標は y 上向き。PDFKit の文字は y 下向きで組まれるので上下を戻す
     pdf.scale(1, -1)
-    pdf
-      .font(book.file(object.fontFamily, object.fontWeight))
-      .fontSize(object.fontSize)
-      .fillColor(object.fill)
-      .text(object.text, laidOut.x0, 0, {
+    pdf.font(book.file(object.fontFamily, object.fontWeight)).fontSize(object.fontSize).fillColor(object.fill)
+    if (isVertical(object)) {
+      // 縦書き: 1字ずつ、縦書き用の字形(vert)で左右の中央に置く。文字としては1字ずつ選択できる
+      for (const item of verticalChars(object)) {
+        const options = { lineBreak: false, baseline: 'alphabetic' as const, features: ['vert'] as PDFKit.Mixins.OpenTypeFeatures[] }
+        pdf.text(item.char, -pdf.widthOfString(item.char, options) / 2, item.baseline, options)
+      }
+    } else {
+      pdf.text(object.text, laidOut.x0, 0, {
         lineBreak: false,
         baseline: 'alphabetic',
         characterSpacing: object.letterSpacing
       })
+    }
   }
   pdf.restore()
 }

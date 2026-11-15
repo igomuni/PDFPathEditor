@@ -10,3 +10,9 @@ samples/*
 # pnpm fonts / pnpm ocr:build で生成する(取得元は src/shared/fonts.ts)
 resources/fonts/
 resources/bin/
+# 別の作業ツリーでは、元のフォルダの resources へのリンクにする
+resources/fonts
+resources/bin
+
+# Claude の作業ツリー
+.claude/

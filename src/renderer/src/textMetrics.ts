@@ -1,5 +1,6 @@
 // テキストの外形(選択枠や範囲選択用)。画面と同じフォントで実測する。
 import type { Rect, TextObject } from '../../shared/model'
+import { fitVertical, isVertical, verticalLocalBox, type CharInk } from '../../shared/vertical'
 import type { TextFit } from './corrections'
 
 let context: OffscreenCanvasRenderingContext2D | null = null
@@ -22,6 +23,7 @@ export function textWidth(object: Pick<TextObject, 'text' | 'fontFamily' | 'font
 
 /** ローカル座標(原点=ベースライン上の基準点、y上向き)での外形 [x0, y0, x1, y1] */
 export function textLocalBox(object: TextObject): Rect {
+  if (isVertical(object)) return verticalLocalBox(object)
   const width = textWidth(object)
   const x0 = object.align === 'left' ? 0 : object.align === 'center' ? -width / 2 : -width
   // 和文フォントの標準的な字面(ベースラインの上 0.88em、下 0.12em)
@@ -33,11 +35,28 @@ export function textLocalBox(object: TextObject): Rect {
  * 高さでサイズを決め、幅は字間で合わせる。1字で横長の字形(「ー」など)は幅でサイズを決める。
  * フォントが読み込まれていなければ null(代わりのフォントで測ると合わないため)。
  */
-export function fitTextToBox(text: string, fontFamily: string, fontWeight: number, box: Rect): TextFit | null {
+export function fitTextToBox(text: string, fontFamily: string, fontWeight: number, box: Rect, vertical = false): TextFit | null {
   context ??= new OffscreenCanvas(1, 1).getContext('2d')
   if (!context || !document.fonts.check(`${fontWeight} 16px "${fontFamily}"`, text)) return null
   const size = 200
   context.font = `${fontWeight} ${size}px "${fontFamily}"`
+  if (vertical) {
+    // 縦書き: 1字ずつ測る(縦書き用の字形は canvas では測れないので、横書きの字形で近似する)
+    const inks = [...text].map((char): CharInk => {
+      const m = context!.measureText(char)
+      return {
+        left: -m.actualBoundingBoxLeft / size,
+        right: m.actualBoundingBoxRight / size,
+        ascent: m.actualBoundingBoxAscent / size,
+        descent: m.actualBoundingBoxDescent / size
+      }
+    })
+    // CharInk の幅は left + right なので、左の余白ぶんを引いた形にそろえる
+    return fitVertical(
+      inks.map((ink) => ({ ...ink, left: 0, right: ink.right - ink.left })),
+      box
+    )
+  }
   const metrics = context.measureText(text)
   const left = metrics.actualBoundingBoxLeft / size
   const inkWidth = (metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight) / size

@@ -11,6 +11,8 @@ export interface TextLayout {
   scale: number
   /** グリフの輪郭(フォントの単位、y上向きの SVG path データ)と、その原点の位置(pt) */
   glyphs: { d: string; x: number; y: number }[]
+  /** 縦書きのときの外形 [x0, y0, x1, y1]。横書きでは省略(x0・width と字面から求める) */
+  box?: Rect
 }
 
 export type LayoutText = (text: TextObject) => TextLayout
@@ -42,8 +44,8 @@ export function exportBounds(object: DocObject, layout: LayoutText): Rect {
   } else {
     let box: Rect = [0, 0, 1, 1]
     if (object.type === 'text') {
-      const { x0, width } = layout(object)
-      box = [x0, -0.12 * object.fontSize, x0 + width, 0.88 * object.fontSize]
+      const laidOut = layout(object)
+      box = laidOut.box ?? [laidOut.x0, -0.12 * object.fontSize, laidOut.x0 + laidOut.width, 0.88 * object.fontSize]
     }
     corners = [
       [box[0], box[1]],

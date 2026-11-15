@@ -1,5 +1,6 @@
 // 確定オブジェクトを SVG にする。座標は pt で、ページの左上が原点。
 import type { Page, PathNode, PathObject, TextObject } from '../../shared/model.ts'
+import { isVertical, verticalChars } from '../../shared/vertical.ts'
 import { exportedObjects, isDrawn, round3, type LayoutText } from './layout.ts'
 
 // document.json は手で編集されたり他所から持ち込まれたりするので、属性に入れる値はすべてここを通す
@@ -62,6 +63,25 @@ function textElement(object: TextObject, layout: LayoutText): string {
           `<path transform="translate(${round3(glyph.x)} ${round3(glyph.y)}) scale(${Number(scale.toFixed(6))})" d="${escapeXml(glyph.d)}"/>`
       )
     return `<g ${commonAttributes(object)} transform="${matrix(object.transform)}" fill="${escapeXml(object.fill)}" aria-label="${escapeXml(object.text)}">${glyphs.join('')}</g>`
+  }
+  if (isVertical(object)) {
+    // 縦書き: 1字ずつ中央揃えで下へ積み、縦書き用の字形(vert)を使う
+    const spans = verticalChars(object)
+      .map((item) => `<tspan x="0" y="${round3(num(item.baseline))}">${escapeXml(item.char)}</tspan>`)
+      .join('')
+    const attributes = [
+      commonAttributes(object),
+      'data-writing-mode="vertical"',
+      `transform="${matrix(object.transform)} scale(1 -1)"`,
+      `font-family="${escapeXml(object.fontFamily)}"`,
+      `font-weight="${num(object.fontWeight)}"`,
+      `font-size="${num(object.fontSize)}"`,
+      'text-anchor="middle"',
+      `fill="${escapeXml(object.fill)}"`,
+      `style="font-feature-settings: 'vert'"`,
+      'xml:space="preserve"'
+    ]
+    return `<text ${attributes.join(' ')}>${spans}</text>`
   }
   const anchor = object.align === 'left' ? 'start' : object.align === 'center' ? 'middle' : 'end'
   const attributes = [

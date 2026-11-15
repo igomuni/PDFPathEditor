@@ -14,6 +14,8 @@ export interface TextSettings {
   x?: number
   y?: number
   align?: TextObject['align']
+  /** 組む向き。縦書きでは x, y が1字目の上辺の中央になる */
+  writingMode?: NonNullable<TextObject['writingMode']>
   fill?: string
   outline?: boolean
   role?: ObjectRole

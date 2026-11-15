@@ -142,7 +142,7 @@ test('置換の fitBox は、置換後の文字列とフォントで合わせ直
     assert.equal(value, '口座')
     assert.equal(family, 'Noto Sans JP')
     assert.equal(weight, 400)
-    return fit(value, family, weight, box)
+    return fit(value, family, weight, box, false)
   })
   const replaced = plan.replacements.get('a')!
   assert.equal(replaced.fontSize, 8)

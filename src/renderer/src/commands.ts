@@ -120,7 +120,7 @@ export function replaceObjectsOfType(
 }
 
 export type TextPatch = Partial<
-  Pick<TextObject, 'text' | 'fontFamily' | 'fontWeight' | 'fontSize' | 'letterSpacing' | 'fill' | 'align' | 'outline'>
+  Pick<TextObject, 'text' | 'fontFamily' | 'fontWeight' | 'fontSize' | 'letterSpacing' | 'fill' | 'align' | 'outline' | 'writingMode'>
 >
 
 /** 選択した Text の属性を変える。同じ属性の連続した変更(入力中など)は1つの履歴にまとめる */

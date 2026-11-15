@@ -29,6 +29,9 @@ export function TextPanel({ texts, fonts }: Props) {
   const align = common(texts, 'align')
   const fill = common(texts, 'fill')
   const outline = common(texts, 'outline')
+  // 省略は横書き
+  const modes = new Set(texts.map((text) => text.writingMode ?? 'horizontal'))
+  const writingMode = modes.size === 1 ? [...modes][0] : null
   const confidence = texts.length === 1 ? texts[0].meta.confidence : undefined
 
   // 取得済みのフォントに加え、選択中の Text が指しているフォントも選択肢に出す
@@ -103,13 +106,25 @@ export function TextPanel({ texts, fonts }: Props) {
       {missing && <p className="warning">このフォントは取得されていません。画面では代わりのフォントで表示しています。</p>}
       {numberField('サイズ', size, 'fontSize', 0.1, 0.1)}
       {numberField('字間', spacing, 'letterSpacing', 0.05, -100)}
+      <label title="縦書きは、1字ずつ上から下へ積む。位置の基準は1字目の上辺の中央になる">
+        <span>向き</span>
+        <select
+          value={writingMode ?? ''}
+          onChange={(e) => apply({ writingMode: e.target.value as NonNullable<TextObject['writingMode']> })}
+          data-field="writingMode"
+        >
+          {writingMode === null && <option value="">混在</option>}
+          <option value="horizontal">横書き</option>
+          <option value="vertical">縦書き</option>
+        </select>
+      </label>
       <label>
         <span>配置</span>
         <select value={align ?? ''} onChange={(e) => apply({ align: e.target.value as TextObject['align'] })}>
           {align === null && <option value="">混在</option>}
-          <option value="left">左</option>
+          <option value="left">{writingMode === 'vertical' ? '上' : '左'}</option>
           <option value="center">中央</option>
-          <option value="right">右</option>
+          <option value="right">{writingMode === 'vertical' ? '下' : '右'}</option>
         </select>
       </label>
       <label>

@@ -22,6 +22,7 @@ import {
 } from './coords'
 import { isVisible, revealRect } from './objectList'
 import { store, type Selection } from './store'
+import { isVertical, verticalChars } from '../../shared/vertical'
 import { cssFontFamily, textLocalBox } from './textMetrics'
 
 export interface CanvasHandle {
@@ -161,6 +162,32 @@ function PathView({
 }
 
 function TextView({ object, color }: { object: TextObject; color: string | null }) {
+  if (isVertical(object)) {
+    // 縦書き: 1字ずつ中央揃えで下へ積む。括弧や長音は、フォントの縦書き用の字形(vert)に切り替える
+    const [x0, y0, x1, y1] = textLocalBox(object)
+    return (
+      <g transform={matrixToSvg(object.transform)} data-object-id={object.id}>
+        <text
+          transform="scale(1 -1)"
+          fontFamily={cssFontFamily(object.fontFamily)}
+          fontWeight={object.fontWeight}
+          fontSize={object.fontSize}
+          textAnchor="middle"
+          fill={color ?? object.fill}
+          pointerEvents="none"
+          style={{ whiteSpace: 'pre', fontFeatureSettings: '"vert"' }}
+        >
+          {verticalChars(object).map((item, i) => (
+            <tspan key={i} x={0} y={item.baseline}>
+              {item.char}
+            </tspan>
+          ))}
+        </text>
+        {/* 字の線ではなく外形全体をクリックできるようにする */}
+        <rect x={x0} y={y0} width={x1 - x0} height={y1 - y0} fill="transparent" stroke="none" />
+      </g>
+    )
+  }
   return (
     <g transform={matrixToSvg(object.transform)} data-object-id={object.id}>
       {/* ローカル座標は y 上向きなので、文字が裏返らないよう上下を戻す */}
@@ -238,7 +265,12 @@ function SelectionOverlay({ objects, selection, scale }: { objects: DocObject[];
           return (
             <g key={object.id} transform={matrixToSvg(object.transform)}>
               <rect className="selection-outline" x={x0} y={y0} width={x1 - x0} height={y1 - y0} stroke={SELECTION_COLOR} />
-              <line className="selection-outline" x1={x0} y1={0} x2={x1} y2={0} stroke={SELECTION_COLOR} strokeDasharray="2 2" />
+              {isVertical(object) ? (
+                // 縦書きの基準線は、文字の中央を通る縦の線
+                <line className="selection-outline" x1={0} y1={y0} x2={0} y2={y1} stroke={SELECTION_COLOR} strokeDasharray="2 2" />
+              ) : (
+                <line className="selection-outline" x1={x0} y1={0} x2={x1} y2={0} stroke={SELECTION_COLOR} strokeDasharray="2 2" />
+              )}
             </g>
           )
         }

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import * as fontkit from 'fontkit'
 import { BUNDLED_FONTS } from '../../shared/fonts'
 import type { TextObject } from '../../shared/model'
+import { isVertical, verticalChars, verticalLocalBox } from '../../shared/vertical'
 import type { LayoutText, TextLayout } from './layout'
 
 /** family と weight からフォントファイルを探して開く。プロジェクトの fonts/ を先に見る */
@@ -47,6 +48,29 @@ export function createLayout(book: FontBook): LayoutText {
     if (cached) return cached
     const font = book.font(object.fontFamily, object.fontWeight)
     const scale = object.fontSize / font.unitsPerEm
+    if (isVertical(object)) {
+      // 縦書き: 1字ずつ、縦書き用の字形(vert)にして左右の中央に置く
+      const box = verticalLocalBox(object)
+      const vertical: TextLayout = {
+        x0: box[0],
+        width: box[2] - box[0],
+        scale,
+        box,
+        glyphs: verticalChars(object).flatMap((item) => {
+          const run = font.layout(item.char, ['vert'])
+          const advance = run.positions.reduce((sum, position) => sum + position.xAdvance, 0) * scale
+          let pen = -advance / 2
+          return run.glyphs.map((glyph, i) => {
+            const position = run.positions[i]
+            const placed = { d: glyph.path.toSVG(), x: pen + position.xOffset * scale, y: -item.baseline + position.yOffset * scale }
+            pen += position.xAdvance * scale
+            return placed
+          })
+        })
+      }
+      cache.set(object, vertical)
+      return vertical
+    }
     const run = font.layout(object.text)
     let pen = 0
     const glyphs = run.glyphs.map((glyph, i) => {

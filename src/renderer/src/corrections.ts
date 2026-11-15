@@ -18,7 +18,7 @@ export interface TextFit {
 }
 
 /** 文字のインクが box に収まるよう、サイズ・位置・字間を決める。フォントを測れないときは null */
-export type FitText = (text: string, fontFamily: string, fontWeight: number, box: Rect) => TextFit | null
+export type FitText = (text: string, fontFamily: string, fontWeight: number, box: Rect, vertical: boolean) => TextFit | null
 
 export interface RejectedOperation {
   /** operations の中の位置(0始まり) */
@@ -44,7 +44,7 @@ const round = (value: number, digits: number): number => Math.round(value * 10 *
 function readSettings(raw: unknown): TextSettings | string {
   if (!isObject(raw)) return '属性の指定がオブジェクトではありません'
   const out: TextSettings = {}
-  const known = new Set(['text', 'fontFamily', 'fontWeight', 'fontSize', 'letterSpacing', 'x', 'y', 'align', 'fill', 'outline', 'role', 'fieldCode', 'fitBox'])
+  const known = new Set(['text', 'fontFamily', 'fontWeight', 'fontSize', 'letterSpacing', 'x', 'y', 'align', 'fill', 'outline', 'role', 'fieldCode', 'fitBox', 'writingMode'])
   for (const key of Object.keys(raw)) if (!known.has(key)) return `未対応の属性です: ${key}`
   if (raw.text !== undefined) {
     if (typeof raw.text !== 'string' || raw.text === '' || raw.text.length > MAX_TEXT_LENGTH || /[\r\n]/.test(raw.text)) {
@@ -72,6 +72,10 @@ function readSettings(raw: unknown): TextSettings | string {
   if (raw.align !== undefined) {
     if (!ALIGNS.includes(raw.align as TextObject['align'])) return 'align は left / center / right のどれかにしてください'
     out.align = raw.align as TextObject['align']
+  }
+  if (raw.writingMode !== undefined) {
+    if (raw.writingMode !== 'horizontal' && raw.writingMode !== 'vertical') return 'writingMode は horizontal / vertical のどちらかにしてください'
+    out.writingMode = raw.writingMode
   }
   if (raw.fill !== undefined) {
     if (typeof raw.fill !== 'string' || !COLOR.test(raw.fill)) return 'fill は #rrggbb の形にしてください'
@@ -108,7 +112,7 @@ function applySettings(base: TextObject, settings: TextSettings, fit: FitText): 
   const [a, b, c, d, e, f] = next.transform
   next = { ...next, transform: [a, b, c, d, x ?? e, y ?? f] }
   if (fitBox) {
-    const fitted = fit(next.text, next.fontFamily, next.fontWeight, fitBox)
+    const fitted = fit(next.text, next.fontFamily, next.fontWeight, fitBox, next.writingMode === 'vertical')
     if (!fitted) return `フォント「${next.fontFamily}」を測れないので、fitBox に合わせられません`
     next = {
       ...next,

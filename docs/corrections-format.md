@@ -57,7 +57,8 @@
 | `letterSpacing` | 数値 | 字間(pt)。各文字の送りに足す |
 | `fontFamily` | 文字列 | 例: `Noto Sans JP`、`Noto Serif JP` |
 | `fontWeight` | 数値 | 100〜900(取得済みは 400 と 700) |
-| `align` | `left` / `center` / `right` | 基準点に対する揃え |
+| `align` | `left` / `center` / `right` | 基準点に対する揃え(縦書きでは 上端 / 中央 / 下端) |
+| `writingMode` | `horizontal` / `vertical` | 組む向き。縦書きでは、`x`・`y` が 1 字目の上辺の中央になり、1 字ずつ下へ積む。`fitBox` と一緒に使うと、枠の幅からサイズ、高さから字間を決める |
 | `fill` | `#rrggbb` | 文字色 |
 | `outline` | 真偽値 | 出力時に輪郭 Path で描く |
 | `role` | 文字列 | `label` / `fieldCode` / `inputCell` / `frame` / `qr` / `formId` / `other` |
@@ -71,5 +72,5 @@
 ファイル全体が読めない(JSON でない、`version` が違う、`operations` がない)ときは取り込まない。
 
 ### できないこと
-- 縦書きの Text は未対応。縦書きの文字は 1 字ずつ `add` する。
+- 縦書きの Text は 1 列だけ。2 列に並ぶ縦書きは、列ごとに別の Text にする。
 - 罫線(Path)の追加・変更はできない(削除だけできる)。
