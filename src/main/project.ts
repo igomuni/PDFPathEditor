@@ -12,6 +12,8 @@ import type {
   AddedPages,
   DetectTarget,
   ExportRequest,
+  ImageCutDraft,
+  ImageCutRequest,
   ImportOptions,
   SavePayload,
   OcrRequest,
@@ -20,9 +22,12 @@ import type {
   VectorizeRequest,
   WorkerReply
 } from '../shared/ipc'
+import { QR_SOURCE } from '../shared/ipc'
 import {
   DOCUMENT_VERSION,
   type DocumentModel,
+  type ImageObject,
+  type Rect,
   type Layer,
   type LayerKind,
   type Page,
@@ -445,6 +450,48 @@ export async function detectCandidates(
     imageTransform: target.transform
   })
   return drafts.map((draft, index) => ({ id: `obj-${randomUUID()}`, ...draft, z: index }))
+}
+
+/** 背景ラスターの一部を切り出して Image にする。PNG は背景と同じフォルダ(assets/<ページ>/)に書く */
+async function cutImages(projectDir: string, target: DetectTarget, kind: ImageCutRequest['kind'], rect?: Rect): Promise<ImageObject[]> {
+  const pngPath = resolveAsset(projectDir, target.asset)
+  const drafts = await runWorker<ImageCutRequest, ImageCutDraft[]>('image-worker.js', 'Image', {
+    kind,
+    pngPath,
+    pixelWidth: target.pixelWidth,
+    pixelHeight: target.pixelHeight,
+    imageTransform: target.transform,
+    rect,
+    outDir: dirname(pngPath),
+    filePrefix: `${kind}-${randomUUID().slice(0, 8)}`
+  })
+  const assetDir = target.asset.replace(/[\\/][^\\/]+$/, '')
+  return drafts.map((draft, index) => ({
+    id: `obj-${randomUUID()}`,
+    type: 'image',
+    role: kind === 'qr' ? 'qr' : 'other',
+    fieldCode: null,
+    transform: draft.transform,
+    z: index,
+    tags: [],
+    meta: { source: kind === 'qr' ? QR_SOURCE : 'crop' },
+    asset: `${assetDir}/${draft.file}`,
+    pixelWidth: draft.pixelWidth,
+    pixelHeight: draft.pixelHeight
+  }))
+}
+
+/** 背景ラスターから QRコードを見つけ、その範囲を Image(role=qr)として切り出す */
+export function detectQr(projectDir: string, target: DetectTarget): Promise<ImageObject[]> {
+  return cutImages(projectDir, target, 'qr')
+}
+
+/** 背景ラスターの rect(PDF座標)の範囲を Image として切り出す */
+export function cropImage(projectDir: string, target: DetectTarget, rect: unknown): Promise<ImageObject[]> {
+  if (!Array.isArray(rect) || rect.length !== 4 || !rect.every((value) => typeof value === 'number' && Number.isFinite(value))) {
+    throw new Error('切り出す範囲が正しくありません')
+  }
+  return cutImages(projectDir, target, 'crop', rect as Rect)
 }
 
 export async function listOcrEngines(resources: ResourcePaths): Promise<OcrEngineInfo[]> {

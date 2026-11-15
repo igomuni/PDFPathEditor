@@ -55,11 +55,19 @@ async function exportDocument(req: ExportRequest): Promise<ExportResult> {
   const layout = createLayout(book)
   const files: string[] = []
 
-  await writePdf(document, book, layout, join(dir, PDF_FILE))
+  // 確定レイヤーの Image(QRコードなど)の PNG を読む
+  const images = new Map<string, Uint8Array>()
+  for (const page of document.pages) {
+    for (const object of exportedObjects(page)) {
+      if (object.type === 'image' && !images.has(object.asset)) images.set(object.asset, await readFile(assetPath(projectDir, object.asset)))
+    }
+  }
+
+  await writePdf(document, book, layout, join(dir, PDF_FILE), images)
   files.push(PDF_FILE)
   for (const page of document.pages) {
     const name = `${pageLabel(page)}.svg`
-    await writeFile(join(dir, name), pageToSvg(page, layout), 'utf8')
+    await writeFile(join(dir, name), pageToSvg(page, layout, images), 'utf8')
     files.push(name)
   }
   await writeFile(join(dir, JSON_FILE), JSON.stringify(buildExportJson(document, layout), null, 2) + '\n', 'utf8')

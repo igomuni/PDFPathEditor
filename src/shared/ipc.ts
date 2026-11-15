@@ -1,4 +1,4 @@
-import type { DocumentModel, ImageObject, Matrix, Page, ProjectManifest, SourceInfo } from './model'
+import type { DocumentModel, ImageObject, Matrix, Page, ProjectManifest, SourceInfo, Rect } from './model'
 import type { OcrEngineId } from './ocr'
 
 export const IPC = {
@@ -29,6 +29,8 @@ export const IPC = {
   readAsset: 'project:read-asset',
   detectCandidates: 'project:detect-candidates',
   detectText: 'project:detect-text',
+  detectQr: 'project:detect-qr',
+  cropImage: 'project:crop-image',
   listOcrEngines: 'ocr:list-engines',
   listFonts: 'fonts:list',
   readFont: 'fonts:read',
@@ -99,6 +101,8 @@ export type MenuCommand =
   | 'detect-lines'
   | 'detect-text'
   | 'assign-field-codes'
+  | 'detect-qr'
+  | 'crop-image'
   | 'confirm-selection'
   | 'confirm-all'
   | 'delete-selection'
@@ -143,6 +147,30 @@ export interface VectorizeRequest {
   pixelHeight: number
   /** 画像オブジェクトの変換行列(単位正方形 → PDF座標) */
   imageTransform: Matrix
+}
+
+/** QRコードの検出で作った Image の meta.source。検出し直すと入れ替える */
+export const QR_SOURCE = 'qr-detect'
+
+export interface ImageCutRequest {
+  /** qr: QRコードを見つけて切り出す / crop: rect の範囲を切り出す */
+  kind: 'qr' | 'crop'
+  pngPath: string
+  pixelWidth: number
+  pixelHeight: number
+  imageTransform: Matrix
+  /** 切り出す範囲(PDF座標)。crop のとき */
+  rect?: Rect
+  /** PNG の書き出し先のフォルダと、ファイル名の前半 */
+  outDir: string
+  filePrefix: string
+}
+
+export interface ImageCutDraft {
+  file: string
+  pixelWidth: number
+  pixelHeight: number
+  transform: Matrix
 }
 
 export type WorkerReply<T> = { ok: true; result: T } | { ok: false; error: string }

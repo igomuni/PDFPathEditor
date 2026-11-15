@@ -1012,3 +1012,9 @@ button.primary {
   text-align: right;
   color: var(--muted);
 }
+
+/* 押すとモードに入るボタン(画像を切り出す) */
+.toolbar button.active {
+  border-color: var(--accent);
+  background: #2f4f73;
+}

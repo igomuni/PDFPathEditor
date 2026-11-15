@@ -90,9 +90,16 @@ async function exportReview(req: ExportRequest): Promise<ReviewExportResult> {
   // 罫線: 少し太らせて描き、罫線のインクを文字の評価から外す
   const lines = whiteCanvas(width, height)
   lines.ctx.strokeStyle = '#000000'
+  lines.ctx.fillStyle = '#000000'
   for (const { object } of objects) {
-    if (object.type !== 'path' || object.stroke === null || object.nodes.length < 2) continue
-    lines.ctx.lineWidth = object.strokeWidth * pxPerPt + 4
+    if (object.type === 'image') {
+      // 切り出した画像(QRコードなど)の範囲は、取れているものとして扱う
+      const [w, , , h, x, y] = object.transform
+      lines.ctx.fillRect(px(x) - 2, py(y + h) - 2, w * pxPerPt + 4, h * pxPerPt + 4)
+      continue
+    }
+    if (object.type !== 'path' || (object.stroke === null && object.fill === null) || object.nodes.length < 2) continue
+    lines.ctx.lineWidth = (object.stroke === null ? 0 : object.strokeWidth) * pxPerPt + 4
     lines.ctx.beginPath()
     // 曲線の頂点(丸数字の丸など)は曲線として描く。直線でつなぐと、丸が「取れていないインク」と誤判定される
     const segment = (from: (typeof object.nodes)[number], to: (typeof object.nodes)[number]): void => {
@@ -111,6 +118,8 @@ async function exportReview(req: ExportRequest): Promise<ReviewExportResult> {
       lines.ctx.closePath()
     }
     lines.ctx.stroke()
+    // 塗りのある Path(矢印など)は、中も塗る
+    if (object.fill !== null) lines.ctx.fill()
   }
   const lineMask = toMask(lines.canvas, 200)
 

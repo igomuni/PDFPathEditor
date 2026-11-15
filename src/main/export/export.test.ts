@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import type { DocObject, DocumentModel, Layer, LayerKind, PathObject, TextObject } from '../../shared/model.ts'
+import type { DocObject, DocumentModel, ImageObject, Layer, LayerKind, PathObject, TextObject } from '../../shared/model.ts'
 import type { GrayRaster } from '../../shared/vectorizer.ts'
 import { buildExportJson } from './json.ts'
 import { exportBounds, exportedObjects, type LayoutText } from './layout.ts'
@@ -272,4 +272,26 @@ test('差分: インクがないときは 再現率 1 / 過剰率 0、大きさ�
   assert.equal(result.excess, 0)
   assert.equal(result.width, 10)
   assert.equal(result.height, 8)
+})
+
+test('SVG: 確定した Image は PNG を埋め込み、上下を戻して置く。PNG がなければ出さない', () => {
+  const image: ImageObject = {
+    id: 'qr',
+    type: 'image',
+    role: 'qr',
+    fieldCode: null,
+    transform: [40, 0, 0, 40, 500, 760],
+    z: 0,
+    tags: [],
+    meta: {},
+    asset: 'assets/page-1/qr-1.png',
+    pixelWidth: 166,
+    pixelHeight: 166
+  }
+  const document = makeDocument([], [image])
+  const svg = pageToSvg(document.pages[0], layout, new Map([[image.asset, new Uint8Array([1, 2, 3])]]))
+  assert.match(svg, /<image id="qr" data-role="qr" transform="matrix\(40 0 0 40 500 760\) matrix\(1 0 0 -1 0 1\)" x="0" y="0" width="1" height="1" preserveAspectRatio="none" href="data:image\/png;base64,AQID"\/>/)
+  assert.doesNotMatch(pageToSvg(document.pages[0], layout), /<image/)
+  assert.deepEqual(exportBounds(image, layout), [500, 760, 540, 800])
+  assert.equal(buildExportJson(document, layout).pages[0].objects[0].bounds[2], 540)
 })

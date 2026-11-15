@@ -1,10 +1,11 @@
 // 確定オブジェクトから PDF を生成する(PDFKit)。元PDFには触れず、モデルだけから作る。
 import { createWriteStream } from 'node:fs'
 import PDFDocument from 'pdfkit'
-import type { DocumentModel, PathObject, TextObject } from '../../shared/model'
+import type { DocumentModel, ImageObject, PathObject, TextObject } from '../../shared/model'
 import { isVertical, verticalChars } from '../../shared/vertical'
 import type { FontBook } from './fonts'
 import { exportedObjects, isDrawn, type LayoutText } from './layout'
+import type { ImageBytes } from './svg'
 
 type Pdf = InstanceType<typeof PDFDocument>
 
@@ -74,8 +75,19 @@ function drawText(pdf: Pdf, object: TextObject, book: FontBook, layout: LayoutTe
   pdf.restore()
 }
 
+/** 画像は PNG のまま埋め込む。単位正方形(y上向き)に、上下を戻して置く */
+function drawImage(pdf: Pdf, object: ImageObject, images: ImageBytes): void {
+  const bytes = images.get(object.asset)
+  if (!bytes) return
+  pdf.save()
+  pdf.transform(...object.transform)
+  pdf.transform(1, 0, 0, -1, 0, 1)
+  pdf.image(Buffer.from(bytes), 0, 0, { width: 1, height: 1 })
+  pdf.restore()
+}
+
 /** ドキュメントの全ページを1つの PDF に書き出す。フォントは使った文字だけをサブセットして埋め込む */
-export function writePdf(document: DocumentModel, book: FontBook, layout: LayoutText, outPath: string): Promise<void> {
+export function writePdf(document: DocumentModel, book: FontBook, layout: LayoutText, outPath: string, images: ImageBytes = new Map()): Promise<void> {
   return new Promise((resolvePromise, reject) => {
     const pdf = new PDFDocument({
       autoFirstPage: false,
@@ -99,6 +111,7 @@ export function writePdf(document: DocumentModel, book: FontBook, layout: Layout
           if (!isDrawn(object)) continue
           if (object.type === 'path') drawPath(pdf, object)
           else if (object.type === 'text') drawText(pdf, object, book, layout)
+          else drawImage(pdf, object, images)
         }
       }
       pdf.end()

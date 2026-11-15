@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { DEFAULT_IMPORT_DPI, DEFAULT_IMPORT_PAGE, DEFAULT_IMPORT_PAGES, type MenuCommand, type RecentProject } from '../../shared/ipc'
+import { DEFAULT_IMPORT_DPI, DEFAULT_IMPORT_PAGE, DEFAULT_IMPORT_PAGES, QR_SOURCE, type MenuCommand, type RecentProject } from '../../shared/ipc'
 import { diffPages, sourceOf, toManifest } from '../../shared/project'
 import { Canvas, type CanvasHandle, type CanvasStatus, type ContextMenuRequest } from './Canvas'
 import { ContextMenu, type MenuItem } from './ContextMenu'
@@ -24,6 +24,7 @@ import {
 } from './commands'
 import { objectBounds, type Point } from './coords'
 import { planCorrections, type CorrectionPlan } from './corrections'
+import { findFormIdTexts } from './formId'
 import { CorrectionsDialog } from './CorrectionsDialog'
 import { charCuts, mergeTexts, splitText } from './textEdit'
 import { fitTextToBox, textWidth } from './textMetrics'
@@ -59,6 +60,8 @@ export function App() {
   const [pendingCorrections, setPendingCorrections] = useState<{ fileName: string; plan: CorrectionPlan } | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuRequest | null>(null)
   /** 左パネルで開いている一覧 */
+  /** 範囲を画像として切り出すモード */
+  const [cropMode, setCropMode] = useState(false)
   const [leftTab, setLeftTab] = useState<'pages' | 'objects' | 'codes'>('objects')
 
   useEffect(() => {
@@ -363,6 +366,71 @@ export function App() {
     [run, ocrEngineId]
   )
 
+  /** 今のページの背景ラスターと、候補レイヤー */
+  const detectTarget = (): { image: Extract<DocObject, { type: 'image' }>; layerId: string } | null => {
+    const current = store.currentPage()
+    const image = current?.layers.find((layer) => layer.kind === 'background')?.objects.find((object) => object.type === 'image')
+    const layer = current?.layers.find((candidate) => candidate.kind === 'candidates')
+    return image && layer ? { image, layerId: layer.id } : null
+  }
+
+  /** QRコードを見つけて Image(role=qr)にし、様式ID の Text に role=formId を付ける */
+  const detectQr = useCallback(
+    () =>
+      run('QRコードと様式IDを検出中…', async () => {
+        const target = detectTarget()
+        if (!target) return
+        const { image, layerId } = target
+        const detected = await window.api.detectQr({ asset: image.asset, transform: image.transform, pixelWidth: image.pixelWidth, pixelHeight: image.pixelHeight })
+        const latest = store.getState().document
+        if (!latest) return
+        // 確定済みの QR と同じ場所のものは足さない
+        const confirmedQr = (store.currentPage()?.layers ?? [])
+          .filter((layer) => layer.kind === 'confirmed')
+          .flatMap((layer) => layer.objects.filter((object) => object.type === 'image' && object.role === 'qr'))
+        const images = detected.filter(
+          (found) => !confirmedQr.some((existing) => Math.abs(existing.transform[4] - found.transform[4]) < 1 && Math.abs(existing.transform[5] - found.transform[5]) < 1)
+        )
+        store.sealHistory()
+        store.execute(replaceObjectsWhere(latest, layerId, (object) => object.type === 'image' && object.meta.source === QR_SOURCE, images, 'QRコードを検出'))
+        const afterQr = store.getState().document
+        const pageNow = store.currentPage()
+        const formIds = pageNow ? findFormIdTexts(pageNow, objectBounds) : []
+        if (afterQr) store.execute(updateObjects(afterQr, formIds, { role: 'formId' }))
+        store.sealHistory()
+        store.select([...images.map((found) => found.id), ...formIds])
+        const skipped = detected.length - images.length
+        setInfo(
+          `QRコード ${detected.length} 個${skipped > 0 ? `(うち ${skipped} 個は確定済み)` : ''}、様式ID ${formIds.length} 件を見つけました。` +
+            (detected.length === 0 ? '見つからないときは「画像を切り出す」で範囲をドラッグしてください。' : '') +
+            (formIds.length === 0 ? '様式ID は、先に「文字を検出」を実行すると見つけられます。' : '')
+        )
+      }),
+    [run]
+  )
+
+  /** ドラッグした範囲を、背景から Image として切り出す */
+  const cropRange = useCallback(
+    (rect: Rect | null) => {
+      setCropMode(false)
+      if (!rect) return
+      void run('画像を切り出し中…', async () => {
+        const target = detectTarget()
+        if (!target) return
+        const { image, layerId } = target
+        const images = await window.api.cropImage({ asset: image.asset, transform: image.transform, pixelWidth: image.pixelWidth, pixelHeight: image.pixelHeight }, rect)
+        const latest = store.getState().document
+        if (!latest) return
+        store.sealHistory()
+        store.execute(addObjects(latest, layerId, images, '画像を切り出す'))
+        store.sealHistory()
+        store.select(images.map((found) => found.id))
+        setInfo('範囲を画像として切り出しました。QRコードなら、右クリックのメニューで役割を「QRコード」にしてください。')
+      })
+    },
+    [run]
+  )
+
   const withDocument = (action: (current: NonNullable<typeof document>) => void) => (): void => {
     const current = store.getState().document
     if (current) action(current)
@@ -551,6 +619,8 @@ export function App() {
       'detect-lines': () => void detectLines(),
       'detect-text': () => void detectText(),
       'assign-field-codes': assignCodes,
+      'detect-qr': () => void detectQr(),
+      'crop-image': () => setCropMode((on) => !on),
       'confirm-selection': confirmSelection,
       'confirm-all': confirmAll,
       'delete-selection': deleteSelection,
@@ -568,7 +638,7 @@ export function App() {
       'zoom-100': () => canvasRef.current?.zoom100()
     }
     return window.api.onMenuCommand((command) => handlers[command]())
-  }, [importPdf, addPdf, openProject, save, exportAll, exportReview, importCorrections, detectLines, detectText])
+  }, [importPdf, addPdf, openProject, save, exportAll, exportReview, importCorrections, detectLines, detectText, detectQr])
 
   // 未保存かどうかを main に伝える(閉じるときの確認用)
   useEffect(() => {
@@ -729,6 +799,17 @@ export function App() {
                 </option>
               ))}
             </select>
+            <button onClick={() => void detectQr()} disabled={busy !== null} title="背景から QRコードを見つけて画像として切り出し、様式ID の Text に役割を付ける">
+              QR・様式ID
+            </button>
+            <button
+              className={cropMode ? 'active' : undefined}
+              onClick={() => setCropMode((on) => !on)}
+              disabled={busy !== null}
+              title="キャンバスでドラッグした範囲を、背景から画像として切り出す(Esc でやめる)"
+            >
+              画像を切り出す
+            </button>
             <button
               onClick={() => void exportReview()}
               disabled={busy !== null}
@@ -910,6 +991,8 @@ export function App() {
               nudgeStep={nudgeStep}
               onStatus={setStatus}
               onContextMenu={setContextMenu}
+              cropMode={cropMode}
+              onCrop={cropRange}
             />
           ) : (
             <div className="empty">

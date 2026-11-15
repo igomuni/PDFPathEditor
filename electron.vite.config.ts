@@ -21,6 +21,8 @@ export default defineConfig({
           'rasterize-worker': resolve(__dirname, 'src/main/rasterize-worker.ts'),
           // Path候補抽出(Vectorizer)用 utility process のエントリ
           'vectorize-worker': resolve(__dirname, 'src/main/vectorize-worker.ts'),
+          // 背景ラスターからの Image の切り出し(QRコードなど)用 utility process のエントリ
+          'image-worker': resolve(__dirname, 'src/main/image-worker.ts'),
           // OCR(Text候補抽出)用 utility process のエントリ
           'ocr-worker': resolve(__dirname, 'src/main/ocr-worker.ts'),
           // 出力(PDF / SVG / JSON)と差分検証用 utility process のエントリ

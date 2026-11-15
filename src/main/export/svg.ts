@@ -1,5 +1,5 @@
 // 確定オブジェクトを SVG にする。座標は pt で、ページの左上が原点。
-import type { Page, PathNode, PathObject, TextObject } from '../../shared/model.ts'
+import type { ImageObject, Page, PathNode, PathObject, TextObject } from '../../shared/model.ts'
 import { isVertical, verticalChars } from '../../shared/vertical.ts'
 import { exportedObjects, isDrawn, round3, type LayoutText } from './layout.ts'
 
@@ -99,14 +99,31 @@ function textElement(object: TextObject, layout: LayoutText): string {
   return `<text ${attributes.join(' ')}>${escapeXml(object.text)}</text>`
 }
 
-export function pageToSvg(page: Page, layout: LayoutText): string {
+/** asset のパス → PNG の中身 */
+export type ImageBytes = ReadonlyMap<string, Uint8Array>
+
+/** 画像は PNG を埋め込む。単位正方形(y上向き)に、上下を戻して置く */
+function imageElement(object: ImageObject, images: ImageBytes): string {
+  const bytes = images.get(object.asset)
+  if (!bytes) return ''
+  const attributes = [
+    commonAttributes(object),
+    `transform="${matrix(object.transform)} matrix(1 0 0 -1 0 1)"`,
+    'x="0" y="0" width="1" height="1"',
+    'preserveAspectRatio="none"',
+    `href="data:image/png;base64,${Buffer.from(bytes).toString('base64')}"`
+  ]
+  return `<image ${attributes.join(' ')}/>`
+}
+
+export function pageToSvg(page: Page, layout: LayoutText, images: ImageBytes = new Map()): string {
   const [x0, y0, x1, y1] = page.mediaBox
   const width = round3(x1 - x0)
   const height = round3(y1 - y0)
   const elements = exportedObjects(page)
     .filter(isDrawn)
     .map((object) =>
-      object.type === 'path' ? pathElement(object) : object.type === 'text' ? textElement(object, layout) : ''
+      object.type === 'path' ? pathElement(object) : object.type === 'text' ? textElement(object, layout) : imageElement(object, images)
     )
     .filter((element) => element !== '')
   return [

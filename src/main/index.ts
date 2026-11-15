@@ -11,7 +11,9 @@ import {
   exportDocument,
   exportReview,
   readCorrections,
+  cropImage,
   detectCandidates,
+  detectQr,
   detectText,
   importPdf,
   listFonts,
@@ -197,7 +199,10 @@ function buildMenu(): void {
         item('罫線を検出', 'CmdOrCtrl+D', 'detect-lines'),
         item('文字を検出(OCR)', 'CmdOrCtrl+T', 'detect-text'),
         { type: 'separator' },
-        item('項目コードを割り当て', 'CmdOrCtrl+G', 'assign-field-codes')
+        item('項目コードを割り当て', 'CmdOrCtrl+G', 'assign-field-codes'),
+        { type: 'separator' },
+        { label: 'QRコードと様式IDを検出', click: () => sendMenuCommand('detect-qr') },
+        { label: '範囲を画像として切り出す', click: () => sendMenuCommand('crop-image') }
       ]
     },
     {
@@ -386,6 +391,8 @@ function registerIpc(): void {
     detectCandidates(requireProjectDir(), target, DEFAULT_VECTORIZER_ID)
   )
 
+  ipcMain.handle(IPC.detectQr, (_event, target: DetectTarget) => detectQr(requireProjectDir(), target))
+  ipcMain.handle(IPC.cropImage, (_event, target: DetectTarget, rect: unknown) => cropImage(requireProjectDir(), target, rect))
   ipcMain.handle(IPC.detectText, (_event, target: DetectTarget, engineId: OcrEngineId) =>
     detectText(requireProjectDir(), target, engineId, resourcePaths())
   )

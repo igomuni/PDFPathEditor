@@ -71,6 +71,9 @@ interface Props {
   nudgeStep: number
   onStatus(status: CanvasStatus): void
   onContextMenu(request: ContextMenuRequest): void
+  /** 範囲を画像として切り出すモード。ドラッグした範囲を onCrop に渡す(Esc は null) */
+  cropMode: boolean
+  onCrop(rect: Rect | null): void
 }
 
 const ZOOM_STEP = Math.SQRT2
@@ -292,7 +295,10 @@ function SelectionOverlay({ objects, selection, scale }: { objects: DocObject[];
             </g>
           )
         }
-        if (object.type !== 'path') return null
+        if (object.type === 'image') {
+          // 単位正方形が画像の範囲
+          return <rect key={object.id} className="selection-outline" x={0} y={0} width={1} height={1} transform={matrixToSvg(object.transform)} stroke={SELECTION_COLOR} />
+        }
         return (
           <g key={object.id}>
             <path
@@ -442,7 +448,7 @@ function TextEditor({ object, page, view, onClose }: { object: TextObject; page:
 }
 
 export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
-  { page, selection, diffMode, untaggedMode, activeCodes, nudgeStep, onStatus, onContextMenu },
+  { page, selection, diffMode, untaggedMode, activeCodes, nudgeStep, onStatus, onContextMenu, cropMode, onCrop },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -569,6 +575,10 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     const editKey = (e: KeyboardEvent): boolean => {
       const document = store.getState().document
       if (!document) return false
+      if (cropMode && e.key === 'Escape') {
+        onCrop(null)
+        return true
+      }
       const direction = ARROW_DIRECTIONS[e.key]
       if (direction && selection.ids.length > 0) {
         // 矢印: ラスター1画素 / Shift: 10倍 / Alt: 1/10
@@ -642,7 +652,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onBlur)
     }
-  }, [page.mediaBox, selection, nudgeStep])
+  }, [page.mediaBox, selection, nudgeStep, cropMode, onCrop])
 
   const zoomPercent = view ? (view.scale / CSS_PX_PER_PT) * 100 : 100
   useEffect(() => {
@@ -668,6 +678,13 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     // Ctrl+クリックは macOS では右クリック(メニュー)になる
     if (e.button !== 0 || e.ctrlKey) return
     store.sealHistory()
+    if (cropMode) {
+      // 切り出す範囲の指定: オブジェクトの上からでも範囲を引ける
+      e.currentTarget.setPointerCapture(e.pointerId)
+      const p = localPoint(e)
+      setMarquee({ from: p, to: p })
+      return
+    }
     const target = e.target as Element
     const nodeEl = target.closest<SVGElement>('[data-node-index]')
     if (nodeEl) {
@@ -754,8 +771,17 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       else if (m.collapseTo) store.select([m.collapseTo])
     }
     if (marquee && view) {
-      const { from, to } = marquee
+      // 終点は離した位置にする(最後の移動がまだ画面に反映されていないことがある)
+      const { from } = marquee
+      const to = localPoint(e)
       setMarquee(null)
+      if (cropMode) {
+        if (Math.hypot(to.x - from.x, to.y - from.y) < CLICK_SLOP_PX) return
+        const a = toPdf(view, from)
+        const b = toPdf(view, to)
+        onCrop([Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y)])
+        return
+      }
       const base = e.shiftKey ? selection.ids : []
       if (Math.hypot(to.x - from.x, to.y - from.y) < CLICK_SLOP_PX) {
         store.select(base)
@@ -817,7 +843,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
   const editingObject = editingId ? editableObjects.find((object) => object.id === editingId) : undefined
 
   const { width: pageWidth, height: pageHeight } = pageSize(page.mediaBox)
-  const cursor = panning ? 'grabbing' : spaceHeld ? 'grab' : moving ? 'move' : 'default'
+  const cursor = panning ? 'grabbing' : spaceHeld ? 'grab' : cropMode ? 'crosshair' : moving ? 'move' : 'default'
   const background = page.layers.filter((layer) => layer.kind === 'background')
   const foreground = page.layers.filter((layer) => layer.kind !== 'background')
 
