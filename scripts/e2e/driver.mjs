@@ -2,6 +2,7 @@
 // 使い方は scripts/e2e/README.md。
 import { spawn } from 'node:child_process'
 import { mkdtempSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -15,7 +16,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
  * userDataDir を省くと一時フォルダを使う(利用者の設定や「最近使ったプロジェクト」を汚さない)。
  */
 export async function launch({ env = {}, userDataDir = mkdtempSync(join(tmpdir(), 'pdfpe-e2e-')), port = 9333 } = {}) {
-  const electron = join(repo, 'node_modules/.bin/electron')
+  const listTargets = async () => (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).filter((t) => t.type === 'page')
+  // 前回の確認で残ったアプリにつながると、古い状態を操作してしまう
+  if (await listTargets().then((targets) => targets.length > 0, () => false)) {
+    throw new Error(`ポート ${port} で別のアプリが動いています。終了させてからやり直してください`)
+  }
+  // node_modules/.bin/electron は本体を起動するだけのスクリプトなので、終了させられるよう本体を直接起動する
+  const electron = createRequire(import.meta.url)('electron')
   const child = spawn(electron, ['-r', join(repo, 'scripts/e2e/stub.cjs'), `--remote-debugging-port=${port}`, `--user-data-dir=${userDataDir}`, '.'], {
     cwd: repo,
     env: { ...process.env, ...env },
@@ -24,7 +31,7 @@ export async function launch({ env = {}, userDataDir = mkdtempSync(join(tmpdir()
   let target
   for (let i = 0; i < 100 && !target; i++) {
     try {
-      target = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find((t) => t.type === 'page')
+      target = (await listTargets())[0]
     } catch {}
     if (!target) await sleep(200)
   }
@@ -93,8 +100,10 @@ export async function launch({ env = {}, userDataDir = mkdtempSync(join(tmpdir()
       send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra }),
     async close() {
       ws.close()
-      child.kill()
-      await sleep(500)
+      const exited = new Promise((r) => child.once('exit', r))
+      // 未保存の変更があると、通常の終了は確認ダイアログ(応答はキャンセル)で止まる。確認用なので強制終了する
+      child.kill('SIGKILL')
+      await Promise.race([exited, sleep(5000)])
     }
   }
   return app
