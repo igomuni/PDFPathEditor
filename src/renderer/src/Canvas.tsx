@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { DocObject, ImageObject, Layer, Page, PathObject, Rect, TextObject } from '../../shared/model'
-import { confirmCandidates, deleteObjects, moveNode, moveObjects } from './commands'
+import { confirmCandidates, deleteObjects, moveNode, moveObjects, substituteObjects, updateTexts } from './commands'
 import {
   applyMatrix,
   centerPage,
@@ -24,7 +24,8 @@ import { dragDelta } from './drag'
 import { isVisible, revealRect } from './objectList'
 import { store, type Selection } from './store'
 import { isVertical, verticalChars } from '../../shared/vertical'
-import { cssFontFamily, textLocalBox } from './textMetrics'
+import { splitText } from './textEdit'
+import { cssFontFamily, textLocalBox, textWidth } from './textMetrics'
 
 export interface CanvasHandle {
   zoomIn(): void
@@ -35,6 +36,19 @@ export interface CanvasHandle {
   reveal(rect: Rect): void
   /** 表示している範囲の中心(PDF座標)。まだ表示していなければ null */
   viewCenter(): Point | null
+  /** Text の文字列を、その場で編集し始める */
+  editText(id: string): void
+}
+
+/** 右クリックされた場所 */
+export interface ContextMenuRequest {
+  /** 画面上の位置(CSS px) */
+  clientX: number
+  clientY: number
+  /** ページ上の位置(PDF座標) */
+  point: Point
+  /** その場所のオブジェクト。何もない場所なら null */
+  objectId: string | null
 }
 
 export interface CanvasStatus {
@@ -56,6 +70,7 @@ interface Props {
   /** 矢印キー1回の移動量(pt)。背景ラスターの1画素 */
   nudgeStep: number
   onStatus(status: CanvasStatus): void
+  onContextMenu(request: ContextMenuRequest): void
 }
 
 const ZOOM_STEP = Math.SQRT2
@@ -311,8 +326,123 @@ function SelectionOverlay({ objects, selection, scale }: { objects: DocObject[];
   )
 }
 
+/**
+ * Text の文字列を、その場で編集する入力欄。Enter・フォーカスを外すと確定、Esc で取り消す。
+ * カーソルの位置、または選択した範囲で Text を分けられる(字の位置は変わらない)。
+ */
+function TextEditor({ object, page, view, onClose }: { object: TextObject; page: Page; view: View; onClose(): void }) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [value, setValue] = useState(object.text)
+  const [hint, setHint] = useState<string | null>(null)
+  const done = useRef(false)
+  useLayoutEffect(() => {
+    inputRef.current?.focus()
+    inputRef.current?.select()
+  }, [])
+
+  const vertical = isVertical(object)
+  const [x0, y0, x1, y1] = textLocalBox({ ...object, text: value === '' ? '　' : value })
+  const toViewport = (x: number, y: number): Point => {
+    const p = pdfToSvg(page.mediaBox, applyMatrix(object.transform, { x, y }))
+    return { x: (p.x - view.x) * view.scale, y: (p.y - view.y) * view.scale }
+  }
+  const topLeft = toViewport(x0, y1)
+  const bottomRight = toViewport(x1, y0)
+  const width = bottomRight.x - topLeft.x
+  const height = bottomRight.y - topLeft.y
+  const fontPx = object.fontSize * view.scale
+  // 入力しやすいよう、行の先に余白を付ける
+  const pad = Math.max(fontPx, 12)
+  const shift = object.align === 'left' ? 0 : object.align === 'center' ? pad : pad * 2
+
+  const finish = (commit: boolean): void => {
+    if (done.current) return
+    done.current = true
+    const document = store.getState().document
+    if (commit && document && value !== object.text) {
+      store.sealHistory()
+      // 空にしたら、その Text を消す
+      store.execute(value.trim() === '' ? deleteObjects(document, [object.id]) : updateTexts(document, [object.id], { text: value }))
+      store.sealHistory()
+    }
+    onClose()
+  }
+  const split = (): void => {
+    const input = inputRef.current
+    const document = store.getState().document
+    if (!input || !document) return
+    const from = input.selectionStart ?? 0
+    const to = input.selectionEnd ?? from
+    const parts = splitText({ ...object, text: value }, from === to ? [from] : [from, to], (text, base) => textWidth({ ...base, text }))
+    if (parts.length < 2) {
+      setHint('分ける位置にカーソルを置くか、分けたい範囲を選択してください')
+      return
+    }
+    done.current = true
+    store.sealHistory()
+    store.execute(substituteObjects(document, new Map([[object.id, parts]]), 'テキストの分離'))
+    store.sealHistory()
+    store.select(parts.map((part) => part.id))
+    onClose()
+  }
+
+  return (
+    <div
+      className="text-editor"
+      style={vertical ? { left: topLeft.x, top: topLeft.y - shift } : { left: topLeft.x - shift, top: topLeft.y }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.stopPropagation()}
+    >
+      <input
+        ref={inputRef}
+        type="text"
+        value={value}
+        spellCheck={false}
+        onChange={(e) => {
+          setValue(e.target.value)
+          setHint(null)
+        }}
+        onBlur={() => finish(true)}
+        onKeyDown={(e) => {
+          if (e.nativeEvent.isComposing) return
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault()
+            split()
+          } else if (e.key === 'Enter') {
+            e.preventDefault()
+            finish(true)
+          } else if (e.key === 'Escape') {
+            e.preventDefault()
+            finish(false)
+          }
+        }}
+        style={{
+          width: vertical ? Math.max(width, 12) : width + pad * 2,
+          height: vertical ? height + pad * 2 : Math.max(height, 12),
+          lineHeight: `${vertical ? Math.max(width, 12) : Math.max(height, 12)}px`,
+          fontFamily: cssFontFamily(object.fontFamily),
+          fontWeight: object.fontWeight,
+          fontSize: fontPx,
+          letterSpacing: object.letterSpacing * view.scale,
+          textAlign: object.align === 'left' ? 'left' : object.align === 'center' ? 'center' : 'right',
+          writingMode: vertical ? 'vertical-rl' : undefined,
+          textOrientation: vertical ? 'upright' : undefined
+        }}
+      />
+      <div className="tools">
+        {/* mousedown で入力欄のフォーカスと選択範囲を失わないようにする */}
+        <button onMouseDown={(e) => e.preventDefault()} onClick={split} title="カーソルの位置、または選択した範囲で Text を分ける (⌘Enter)">
+          選択範囲で分離
+        </button>
+        <span className="hint">{hint ?? 'Enter で確定 / Esc で取り消し'}</span>
+      </div>
+    </div>
+  )
+}
+
 export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
-  { page, selection, diffMode, untaggedMode, activeCodes, nudgeStep, onStatus },
+  { page, selection, diffMode, untaggedMode, activeCodes, nudgeStep, onStatus, onContextMenu },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -337,6 +467,8 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     collapseTo: string | null
   } | null>(null)
   const [moving, setMoving] = useState(false)
+  /** 文字列をその場で編集している Text のID */
+  const [editingId, setEditingId] = useState<string | null>(null)
 
   // 選択・編集できるのは、表示中でロックされていないレイヤーのオブジェクトだけ
   const editableObjects = useMemo(
@@ -396,6 +528,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     zoomFit: () => size && setView(fitPage(page.mediaBox, size)),
     zoom100: () => size && setView(centerPage(page.mediaBox, size, CSS_PX_PER_PT)),
     viewCenter: () => (view && size ? toPdf(view, { x: size.width / 2, y: size.height / 2 }) : null),
+    editText: (id) => setEditingId(id),
     reveal: (rect) => {
       if (!size) return
       const [x0, y0, x1, y1] = rect
@@ -532,7 +665,8 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       setPanning(true)
       return
     }
-    if (e.button !== 0) return
+    // Ctrl+クリックは macOS では右クリック(メニュー)になる
+    if (e.button !== 0 || e.ctrlKey) return
     store.sealHistory()
     const target = e.target as Element
     const nodeEl = target.closest<SVGElement>('[data-node-index]')
@@ -648,6 +782,40 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     setMarquee(null)
   }
 
+  /** その位置にある、編集できるオブジェクトのID */
+  const objectIdAt = (clientX: number, clientY: number): string | null => {
+    for (const el of window.document.elementsFromPoint(clientX, clientY)) {
+      const id = el.closest<SVGElement>('[data-object-id]')?.dataset.objectId
+      if (id && editableObjects.some((object) => object.id === id)) return id
+    }
+    return null
+  }
+
+  // ダブルクリック: Text の文字列をその場で編集する
+  const onDoubleClick = (e: React.MouseEvent<HTMLDivElement>): void => {
+    const id = objectIdAt(e.clientX, e.clientY)
+    if (!id || editableObjects.find((object) => object.id === id)?.type !== 'text') return
+    store.select([id])
+    setEditingId(id)
+  }
+
+  const onContextMenuEvent = (e: React.MouseEvent<HTMLDivElement>): void => {
+    e.preventDefault()
+    if (!view) return
+    const objectId = objectIdAt(e.clientX, e.clientY)
+    // 選択していないものの上なら、それを選択してからメニューを出す
+    if (objectId && !selection.ids.includes(objectId)) store.select([objectId])
+    const rect = e.currentTarget.getBoundingClientRect()
+    onContextMenu({
+      clientX: e.clientX,
+      clientY: e.clientY,
+      point: toPdf(view, { x: e.clientX - rect.left, y: e.clientY - rect.top }),
+      objectId
+    })
+  }
+
+  const editingObject = editingId ? editableObjects.find((object) => object.id === editingId) : undefined
+
   const { width: pageWidth, height: pageHeight } = pageSize(page.mediaBox)
   const cursor = panning ? 'grabbing' : spaceHeld ? 'grab' : moving ? 'move' : 'default'
   const background = page.layers.filter((layer) => layer.kind === 'background')
@@ -663,6 +831,8 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
       onPointerLeave={() => setCursorPdf(null)}
+      onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenuEvent}
     >
       {size && view && (
         <svg
@@ -714,6 +884,9 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
             />
           )}
         </svg>
+      )}
+      {view && editingObject?.type === 'text' && (
+        <TextEditor key={editingObject.id} object={editingObject} page={page} view={view} onClose={() => setEditingId(null)} />
       )}
     </div>
   )

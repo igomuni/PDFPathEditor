@@ -6,6 +6,9 @@ import { store } from './store'
 interface Props {
   texts: TextObject[]
   fonts: FontInfo[]
+  onEdit(): void
+  onMerge(): void
+  onSplitChars(): void
 }
 
 /** 選択中の全 Text で同じ値ならその値、違えば null */
@@ -14,7 +17,7 @@ function common<K extends keyof TextObject>(texts: TextObject[], key: K): TextOb
 }
 
 /** 選択した Text の文字列・フォント・サイズなどを編集するパネル */
-export function TextPanel({ texts, fonts }: Props) {
+export function TextPanel({ texts, fonts, onEdit, onMerge, onSplitChars }: Props) {
   const ids = texts.map((text) => text.id)
   const apply = (patch: TextPatch): void => {
     const document = store.getState().document
@@ -135,6 +138,17 @@ export function TextPanel({ texts, fonts }: Props) {
         <span>輪郭Path</span>
         <input type="checkbox" checked={outline ?? false} onChange={(e) => apply({ outline: e.target.checked })} />
       </label>
+      <div className="text-actions">
+        <button onClick={onEdit} disabled={texts.length !== 1} title="キャンバスの上で文字列を編集する。選択した範囲で分けることもできる (F2、ダブルクリック)">
+          その場で編集
+        </button>
+        <button onClick={onMerge} disabled={texts.length < 2} title="選択した Text を、読む順に並べて1つにする (⌘J)">
+          結合
+        </button>
+        <button onClick={onSplitChars} disabled={!texts.some((text) => [...text.text].length > 1)} title="選択した Text を1字ずつに分ける (⇧⌘J)">
+          1字ずつに分離
+        </button>
+      </div>
       {typeof confidence === 'number' && <p className="hint">OCR の確信度 {confidence.toFixed(2)}</p>}
     </section>
   )

@@ -5,6 +5,7 @@ import {
   addObjects,
   confirmCandidates,
   duplicateObjects,
+  substituteObjects,
   deleteObjects,
   moveNode,
   moveObjects,
@@ -264,4 +265,17 @@ test('追加と複製: 手前に積み、複製は元と同じレイヤーにず
   assert.deepEqual(history.undo(copied), document)
   // 対象がなければ null
   assert.equal(duplicateObjects(document, ['missing'], 1, 1).command, null)
+})
+
+test('入れ替え: その場で別の並びに入れ替え、空なら消す。重なりの順を引き継ぎ、Undo で戻る', () => {
+  const document = makeDocument([{ ...label('a', '収入金額', 0, 0), z: 4 }, label('b', '等', 40, 0), line('rule', 0, 0, 10, 0)])
+  const history = new History()
+  const next = history.execute(
+    document,
+    substituteObjects(document, new Map<string, DocObject[]>([['a', [label('a', '収入', 0, 0), label('a2', '金額', 20, 0)]], ['b', []]]), 'テキストの分離')!
+  )
+  const objects = next.pages[0].layers.find((l) => l.kind === 'candidates')!.objects
+  assert.deepEqual(objects.map((o) => [o.id, o.z]), [['a', 4], ['a2', 4], ['rule', 0]])
+  assert.deepEqual(history.undo(next), document)
+  assert.equal(substituteObjects(document, new Map([['missing', []]]), '何もしない'), null)
 })

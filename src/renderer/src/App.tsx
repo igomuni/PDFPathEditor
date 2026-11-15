@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_IMPORT_DPI, DEFAULT_IMPORT_PAGE, DEFAULT_IMPORT_PAGES, type MenuCommand, type RecentProject } from '../../shared/ipc'
 import { diffPages, sourceOf, toManifest } from '../../shared/project'
-import { Canvas, type CanvasHandle, type CanvasStatus } from './Canvas'
+import { Canvas, type CanvasHandle, type CanvasStatus, type ContextMenuRequest } from './Canvas'
+import { ContextMenu, type MenuItem } from './ContextMenu'
 import { DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT } from '../../shared/fonts'
-import type { DocObject, TextObject } from '../../shared/model'
+import type { DocObject, ObjectRole, TextObject } from '../../shared/model'
 import { CIRCLE_SOURCE, type OcrEngineId, type OcrEngineInfo } from '../../shared/ocr'
 import {
   addObjects,
@@ -15,17 +16,22 @@ import {
   deleteObjects,
   lineAxis,
   setLayerOpacity,
-  setLayerVisible
+  setLayerVisible,
+  setObjectsVisible,
+  substituteObjects,
+  updateObjects,
+  updateTexts
 } from './commands'
-import { objectBounds } from './coords'
+import { objectBounds, type Point } from './coords'
 import { planCorrections, type CorrectionPlan } from './corrections'
 import { CorrectionsDialog } from './CorrectionsDialog'
-import { fitTextToBox } from './textMetrics'
+import { charCuts, mergeTexts, splitText } from './textEdit'
+import { fitTextToBox, textWidth } from './textMetrics'
 import { useFonts } from './fonts'
 import { ObjectList } from './ObjectListPanel'
 import { PageTree } from './PageTreePanel'
 import { isVisible } from './objectList'
-import { CodeList, collectCodes, TagSection } from './TagPanel'
+import { CodeList, collectCodes, ROLE_LABELS, TagSection } from './TagPanel'
 import { TextPanel } from './TextPanel'
 import { store, useStore } from './store'
 
@@ -49,6 +55,7 @@ export function App() {
   const [ocrEngineId, setOcrEngineId] = useState<OcrEngineId | null>(null)
   const [recent, setRecent] = useState<RecentProject[]>([])
   const [pendingCorrections, setPendingCorrections] = useState<{ fileName: string; plan: CorrectionPlan } | null>(null)
+  const [contextMenu, setContextMenu] = useState<ContextMenuRequest | null>(null)
 
   useEffect(() => {
     void window.api.listOcrEngines().then((engines) => {
@@ -364,8 +371,10 @@ export function App() {
   })
   const confirmAll = withDocument((current) => store.execute(confirmCandidates(current, undefined, store.currentPage()?.id)))
   const deleteSelection = withDocument((current) => store.execute(deleteObjects(current, store.getState().selection.ids)))
-  /** 任意のテキストを、表示している範囲の中央に追加する。文字列や大きさは右のパネルで直す */
-  const addText = withDocument((current) => {
+  /** 任意のテキストを追加する。at を省くと、表示している範囲の中央に置く。文字列はその場で編集できる */
+  const addTextAt = (at?: Point): void => {
+    const current = store.getState().document
+    if (!current) return
     const target = store.currentPage()
     const layer = target?.layers.find((candidate) => candidate.kind === 'candidates' && !candidate.locked)
     if (!target || !layer) return
@@ -374,10 +383,11 @@ export function App() {
       .flatMap((candidate) => candidate.objects)
       .flatMap((object) => (object.type === 'text' ? [object.fontSize] : []))
       .sort((a, b) => a - b)
-    const center = canvasRef.current?.viewCenter() ?? {
-      x: (target.mediaBox[0] + target.mediaBox[2]) / 2,
-      y: (target.mediaBox[1] + target.mediaBox[3]) / 2
-    }
+    const center = at ??
+      canvasRef.current?.viewCenter() ?? {
+        x: (target.mediaBox[0] + target.mediaBox[2]) / 2,
+        y: (target.mediaBox[1] + target.mediaBox[3]) / 2
+      }
     const text: TextObject = {
       id: `obj-${crypto.randomUUID()}`,
       type: 'text',
@@ -399,8 +409,50 @@ export function App() {
     store.execute(addObjects(current, layer.id, [text], 'テキストを追加'))
     store.sealHistory()
     store.select([text.id])
-    setInfo('テキストを追加しました。右のパネルで文字列を直し、矢印キーで位置を合わせてください。')
+    setInfo('テキストを追加しました。ダブルクリックで文字列を直し、ドラッグか矢印キーで位置を合わせてください。')
+  }
+  const addText = (): void => addTextAt()
+
+  /** 今のページで選択している、編集できる Text */
+  const currentTexts = (): TextObject[] => {
+    const ids = new Set(store.getState().selection.ids)
+    return (store.currentPage()?.layers ?? [])
+      .filter((layer) => layer.visible && !layer.locked)
+      .flatMap((layer) => layer.objects)
+      .flatMap((object) => (object.type === 'text' && ids.has(object.id) && isVisible(object) ? [object] : []))
+  }
+  const advanceOf = (text: string, base: TextObject): number => textWidth({ ...base, text })
+  /** 選択した Text を、読む順に並べて1つにする */
+  const mergeSelection = withDocument((current) => {
+    const texts = currentTexts()
+    const merged = mergeTexts(texts, objectBounds, advanceOf)
+    if (!merged) {
+      setInfo('結合するには、Text を2つ以上選択してください。')
+      return
+    }
+    store.sealHistory()
+    store.execute(substituteObjects(current, new Map(texts.map((text) => [text.id, text.id === merged.id ? [merged] : []])), 'テキストの結合'))
+    store.sealHistory()
+    store.select([merged.id])
   })
+  /** 選択した Text を1字ずつに分ける(字の位置は変わらない) */
+  const splitSelectionChars = withDocument((current) => {
+    const substitutions = new Map<string, DocObject[]>()
+    for (const text of currentTexts()) {
+      const parts = splitText(text, charCuts(text.text), advanceOf)
+      if (parts.length > 1) substitutions.set(text.id, parts)
+    }
+    if (substitutions.size === 0) return
+    store.sealHistory()
+    store.execute(substituteObjects(current, substitutions, 'テキストの分離'))
+    store.sealHistory()
+    store.select([...substitutions.values()].flatMap((parts) => parts.map((part) => part.id)))
+  })
+  /** 選択している Text が1つなら、その場で編集し始める */
+  const editSelectedText = (): void => {
+    const texts = currentTexts()
+    if (texts.length === 1) canvasRef.current?.editText(texts[0].id)
+  }
   /** 選択を複製する。複製は背景ラスターの10画素ぶん右下にずらして置き、複製したほうを選択する */
   const duplicateSelection = withDocument((current) => {
     const { command, ids } = duplicateObjects(current, store.getState().selection.ids, nudgeStep * 10, -nudgeStep * 10)
@@ -416,6 +468,60 @@ export function App() {
         .flatMap((layer) => layer.objects.filter(isVisible).map((object) => object.id))
     )
   )
+
+  /** 右クリックのメニュー。選択しているものに合わせて項目を出す */
+  const contextMenuItems = (request: ContextMenuRequest): MenuItem[] => {
+    const ids = selection.ids
+    const texts = selectedTexts
+    const execute = (make: (current: NonNullable<typeof document>) => ReturnType<typeof updateObjects>) => (): void => {
+      const current = store.getState().document
+      if (!current) return
+      store.sealHistory()
+      store.execute(make(current))
+      store.sealHistory()
+    }
+    const general: MenuItem[] = [
+      { label: 'テキストをここに追加', action: () => addTextAt(request.point) },
+      { label: 'すべて選択', shortcut: '⌘A', action: selectAll },
+      'separator',
+      { label: 'ページ全体を表示', shortcut: '5', action: () => canvasRef.current?.zoomFit() },
+      { label: '100% で表示', shortcut: '1', action: () => canvasRef.current?.zoom100() }
+    ]
+    if (ids.length === 0) return general
+    const inCandidates = selectedObjects.some((object) => candidates?.objects.some((candidate) => candidate.id === object.id))
+    const roles = new Set(selectedObjects.map((object) => object.role))
+    const hasCode = selectedObjects.some((object) => object.fieldCode !== null)
+    const allVertical = texts.length > 0 && texts.every((text) => text.writingMode === 'vertical')
+    return [
+      { label: '文字列を編集', shortcut: 'F2', disabled: texts.length !== 1 || ids.length !== 1, action: editSelectedText },
+      { label: 'テキストを結合', shortcut: '⌘J', disabled: texts.length < 2, action: mergeSelection },
+      { label: '1字ずつに分離', shortcut: '⇧⌘J', disabled: !texts.some((text) => [...text.text].length > 1), action: splitSelectionChars },
+      {
+        label: allVertical ? '横書きにする' : '縦書きにする',
+        disabled: texts.length === 0,
+        action: execute((current) => updateTexts(current, texts.map((text) => text.id), { writingMode: allVertical ? 'horizontal' : 'vertical' }))
+      },
+      'separator',
+      { label: '確定レイヤーへ移す', shortcut: 'Enter', disabled: !inCandidates, action: confirmSelection },
+      { label: '複製', shortcut: '⌥⌘D', action: duplicateSelection },
+      { label: '削除', shortcut: 'Delete', action: deleteSelection },
+      { label: '非表示にする', action: execute((current) => setObjectsVisible(current, ids, false)) },
+      'separator',
+      {
+        label: '役割',
+        children: (Object.keys(ROLE_LABELS) as ObjectRole[])
+          .filter((role) => role !== 'background')
+          .map((role) => ({
+            label: ROLE_LABELS[role],
+            checked: roles.size === 1 && roles.has(role),
+            action: execute((current) => updateObjects(current, ids, { role }))
+          }))
+      },
+      { label: '項目コードを外す', disabled: !hasCode, action: execute((current) => updateObjects(current, ids, { fieldCode: null })) },
+      'separator',
+      ...general
+    ]
+  }
 
   useEffect(() => {
     const handlers: Record<MenuCommand, () => void> = {
@@ -436,6 +542,9 @@ export function App() {
       'delete-selection': deleteSelection,
       'add-text': addText,
       'duplicate-selection': duplicateSelection,
+      'edit-text': editSelectedText,
+      'merge-texts': mergeSelection,
+      'split-text-chars': splitSelectionChars,
       'select-all': selectAll,
       'toggle-diff': () => store.setDiffMode(!store.getState().diffMode),
       'toggle-untagged': () => store.setUntaggedMode(!store.getState().untaggedMode),
@@ -756,6 +865,7 @@ export function App() {
               activeCodes={activeCodes}
               nudgeStep={nudgeStep}
               onStatus={setStatus}
+              onContextMenu={setContextMenu}
             />
           ) : (
             <div className="empty">
@@ -786,11 +896,22 @@ export function App() {
         {page && (
           <aside className="panel">
             {selectedObjects.length > 0 && <TagSection objects={selectedObjects} codes={codeNames} />}
-            {selectedTexts.length > 0 && <TextPanel texts={selectedTexts} fonts={fonts} />}
+            {selectedTexts.length > 0 && (
+              <TextPanel texts={selectedTexts} fonts={fonts} onEdit={editSelectedText} onMerge={mergeSelection} onSplitChars={splitSelectionChars} />
+            )}
             <CodeList entries={codeEntries} activeCodes={activeCodes} />
           </aside>
         )}
       </div>
+
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.clientX}
+          y={contextMenu.clientY}
+          items={contextMenuItems(contextMenu)}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
 
       {pendingCorrections && (
         <CorrectionsDialog

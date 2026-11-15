@@ -388,3 +388,14 @@ export function duplicateObjects(
   })
   return { command, ids: created }
 }
+
+/**
+ * オブジェクトを、その場で別のオブジェクトの並びに入れ替える(Text の分離・結合)。
+ * 空の配列を渡したものは消える。重なりの順は元のものを引き継ぐ。
+ */
+export function substituteObjects(document: DocumentModel, substitutions: ReadonlyMap<string, DocObject[]>, label: string): Command | null {
+  return objectsCommand(label, document, (layer) => {
+    if (layer.locked || !layer.objects.some((object) => substitutions.has(object.id))) return null
+    return layer.objects.flatMap((object) => substitutions.get(object.id)?.map((next) => ({ ...next, z: object.z })) ?? [object])
+  })
+}

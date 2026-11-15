@@ -184,7 +184,11 @@ function buildMenu(): void {
         { label: '選択を削除 (Delete)', click: () => sendMenuCommand('delete-selection') },
         { type: 'separator' },
         item('テキストを追加', 'Shift+CmdOrCtrl+T', 'add-text'),
-        item('選択を複製', 'Alt+CmdOrCtrl+D', 'duplicate-selection')
+        item('選択を複製', 'Alt+CmdOrCtrl+D', 'duplicate-selection'),
+        { type: 'separator' },
+        item('文字列を編集', 'F2', 'edit-text'),
+        item('テキストを結合', 'CmdOrCtrl+J', 'merge-texts'),
+        item('テキストを1字ずつに分離', 'Shift+CmdOrCtrl+J', 'split-text-chars')
       ]
     },
     {
