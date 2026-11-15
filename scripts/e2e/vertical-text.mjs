@@ -44,6 +44,10 @@ try {
   const vertical = textsOf(page).filter((text) => text.writingMode === 'vertical')
   console.log('     縦書きにまとめた Text:', vertical.map((text) => `${text.text}(${text.fontSize}pt, 字間 ${text.letterSpacing})`).join(' / '))
   check('縦に並ぶ1字の Text が縦書きにまとまる', vertical.length > 0 && vertical.every((text) => [...text.text].length >= 2))
+  // 枠の読み直し: 背景と合っていない枠・読み落としのある枠を、列・行に分けて読み直した候補がある
+  const reread = textsOf(page).filter((text) => text.meta.reread)
+  console.log('     読み直した Text:', reread.map((text) => `${text.text}${text.writingMode === 'vertical' ? '(縦)' : ''}`).join(' / '))
+  check('枠の読み直しで、縦書きと横書きの候補ができる', reread.some((text) => text.meta.reread === 'vertical' && text.writingMode === 'vertical') && reread.some((text) => text.meta.reread === 'horizontal'), `${reread.length} 件`)
   const drawn = await app.evaluate(`document.querySelectorAll('svg text tspan').length`)
   check('縦書きの Text が1字ずつ描かれる', drawn === vertical.reduce((sum, text) => sum + [...text.text].length, 0), `tspan ${drawn} 個`)
   if (shots) await app.screenshot(join(shots, 'vertical-detected.png'))

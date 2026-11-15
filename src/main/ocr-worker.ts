@@ -4,6 +4,7 @@ import type { OcrRequest, WorkerReply } from '../shared/ipc'
 import type { TextDraft } from '../shared/ocr'
 import { recognize } from './ocr/engines'
 import { cleanText, fitText, splitAtRules, tightInkBox, type InkMetrics } from './ocr/postprocess'
+import { rereadCells } from './ocr/reread-run'
 import { mergeVerticalRuns } from './ocr/vertical'
 import { loadRaster, pixelToPdfMatrix } from './raster'
 import { detectLines } from './vectorize/line-detector'
@@ -79,11 +80,30 @@ async function detectText(req: OcrRequest): Promise<TextDraft[]> {
       outline: false
     })
   }
+  // 背景と合っていない枠・読み落としのある枠を、縦の列・横の行に分けて読み直す
+  const reread = await rereadCells(
+    {
+      engineId: req.engineId,
+      canvas,
+      raster,
+      rules,
+      pixelToPdf: m,
+      inkThreshold: INK_THRESHOLD,
+      minConfidence: MIN_CONFIDENCE,
+      minFontSizePx: MIN_FONT_SIZE_PX,
+      fontAlias: FIT_FONT_ALIAS,
+      measure,
+      visionBinary: req.visionBinary,
+      tesseractLangPath: req.tesseractLangPath
+    },
+    drafts
+  )
+
   // 縦に並ぶ1字の Text を縦書きの Text にまとめる。横の罫線(画素)を PDF座標に直して、またぐものは別の枠とみなす
   const horizontals = rules
     .filter((rule) => rule.orientation === 'h' && rule.dash === null)
     .map((rule) => ({ y: m[3] * rule.center + m[5], x0: m[0] * rule.start + m[4], x1: m[0] * rule.end + m[4] }))
-  return mergeVerticalRuns(drafts, (x, yBottom, yTop) =>
+  return mergeVerticalRuns(reread, (x, yBottom, yTop) =>
     horizontals.some((rule) => rule.y > yBottom && rule.y < yTop && rule.x0 <= x && x <= rule.x1)
   )
 }
