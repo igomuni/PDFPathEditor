@@ -1,4 +1,4 @@
-// 実アプリの通し確認: プロジェクトを開く → 罫線検出 → 項目コード割り当て → 全件確定 → 出力。
+// 実アプリの通し確認: プロジェクトを開く → 罫線検出 → 項目コード割り当て → 全件確定 → 出力 → 確認用データ。
 // プロジェクトはコピーしてから使う(元のフォルダは変更しない)。
 //   node scripts/e2e/smoke.mjs <プロジェクトフォルダ>
 import { cpSync, mkdtempSync } from 'node:fs'
@@ -44,6 +44,11 @@ try {
   await app.waitIdle()
   const exported = await app.info()
   check('出力と検証が動く', /再現率/.test(exported) && (await app.error()) === '', exported.replace(project, '<project>'))
+
+  await app.click('確認用データ')
+  await app.waitIdle()
+  const review = await app.info()
+  check('確認用データを書き出せる', /確認用データを書き出しました/.test(review) && (await app.error()) === '', review.replace(project, '<project>'))
 
   check('コンソールエラーがない', app.consoleErrors.length === 0, app.consoleErrors.join(' / '))
 } finally {

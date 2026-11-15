@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
-import { IPC, type DetectTarget, type ImportOptions, type MenuCommand, type OpenedProject, type RecentProject, type UnsavedChoice } from '../shared/ipc'
+import { IPC, type AddedPages, type DetectTarget, type SavePayload, type ImportOptions, type MenuCommand, type OpenedProject, type RecentProject, type UnsavedChoice } from '../shared/ipc'
 import type { PickedCorrections, ReviewExportResult } from '../shared/corrections'
 import type { ExportResult } from '../shared/export'
 import type { FontFace } from '../shared/fonts'
@@ -9,6 +9,7 @@ import type { OcrEngineId, OcrEngineInfo } from '../shared/ocr'
 const api = {
   importPdf: (options: ImportOptions): Promise<OpenedProject | null> =>
     ipcRenderer.invoke(IPC.importPdf, options),
+  addPdf: (options: ImportOptions): Promise<AddedPages | null> => ipcRenderer.invoke(IPC.addPdf, options),
   openProject: (): Promise<OpenedProject | null> => ipcRenderer.invoke(IPC.openProject),
   openRecentProject: (dir: string): Promise<OpenedProject> => ipcRenderer.invoke(IPC.openRecentProject, dir),
   listRecentProjects: (): Promise<RecentProject[]> => ipcRenderer.invoke(IPC.listRecentProjects),
@@ -31,8 +32,7 @@ const api = {
     return () => ipcRenderer.removeListener(IPC.saveBeforeClose, handler)
   },
   closeNow: (): void => ipcRenderer.send(IPC.closeNow),
-  saveDocument: (document: DocumentModel): Promise<void> =>
-    ipcRenderer.invoke(IPC.saveDocument, document),
+  saveDocument: (payload: SavePayload): Promise<void> => ipcRenderer.invoke(IPC.saveDocument, payload),
   exportDocument: (document: DocumentModel): Promise<ExportResult> =>
     ipcRenderer.invoke(IPC.exportDocument, document),
   exportReview: (document: DocumentModel): Promise<ReviewExportResult> =>

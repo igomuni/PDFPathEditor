@@ -85,21 +85,25 @@ function layer(kind: LayerKind, objects: DocObject[]): Layer {
 
 function makeDocument(candidates: DocObject[], confirmed: DocObject[]): DocumentModel {
   return {
-    version: 1,
+    version: 2,
     createdAt: '',
-    source: {
-      file: 'source/form.pdf',
-      originalFileName: 'form.pdf',
-      sha256: 'abc',
-      byteLength: 0,
-      pageCount: 3,
-      encrypted: false,
-      encryptFilter: null,
-      permissions: null
-    },
+    sources: [
+      {
+        id: 'src-1',
+        file: 'source/form.pdf',
+        originalFileName: 'form.pdf',
+        sha256: 'abc',
+        byteLength: 0,
+        pageCount: 3,
+        encrypted: false,
+        encryptFilter: null,
+        permissions: null
+      }
+    ],
     pages: [
       {
         id: 'page-1',
+        sourceId: 'src-1',
         sourcePageNumber: 2,
         mediaBox: [0, 0, 595, 842],
         layers: [layer('background', []), layer('candidates', candidates), layer('confirmed', confirmed)]
@@ -193,7 +197,8 @@ test('JSON: 確定オブジェクトの一覧と、項目コードごとの索�
   )
   const json = buildExportJson(document, layout)
   assert.deepEqual(json.coordinateSystem, { unit: 'pt', origin: 'bottom-left', yAxis: 'up' })
-  assert.deepEqual(json.source, { fileName: 'form.pdf', sha256: 'abc' })
+  assert.deepEqual(json.sources, [{ id: 'src-1', fileName: 'form.pdf', sha256: 'abc' }])
+  assert.equal(json.pages[0].sourceId, 'src-1')
   const [page] = json.pages
   assert.equal(page.pageNumber, 2)
   assert.deepEqual(

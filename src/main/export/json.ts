@@ -24,8 +24,11 @@ export interface ExportJson {
   version: typeof EXPORT_JSON_VERSION
   /** 座標の約束 */
   coordinateSystem: { unit: 'pt'; origin: 'bottom-left'; yAxis: 'up' }
-  source: { fileName: string; sha256: string }
+  /** 取り込み元のPDF */
+  sources: { id: string; fileName: string; sha256: string }[]
   pages: {
+    /** 取り込み元のPDF(sources の id) */
+    sourceId: string
     /** 元PDFでのページ番号(1始まり) */
     pageNumber: number
     mediaBox: Rect
@@ -39,7 +42,9 @@ export function buildExportJson(document: DocumentModel, layout: LayoutText): Ex
   return {
     version: EXPORT_JSON_VERSION,
     coordinateSystem: { unit: 'pt', origin: 'bottom-left', yAxis: 'up' },
-    source: { fileName: document.source.originalFileName, sha256: document.source.sha256 },
+    sources: document.sources
+      .filter((source) => document.pages.some((page) => page.sourceId === source.id))
+      .map((source) => ({ id: source.id, fileName: source.originalFileName, sha256: source.sha256 })),
     pages: document.pages.map((page) => {
       const fields = new Map<string, ExportedField>()
       const objects = exportedObjects(page).map((object): ExportedObject => {
@@ -59,6 +64,7 @@ export function buildExportJson(document: DocumentModel, layout: LayoutText): Ex
       })
       const sorted = [...fields.entries()].sort((a, b) => a[0].localeCompare(b[0], 'en', { numeric: true }))
       return {
+        sourceId: page.sourceId,
         pageNumber: page.sourcePageNumber,
         mediaBox: page.mediaBox,
         objects,

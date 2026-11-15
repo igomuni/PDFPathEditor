@@ -1,6 +1,7 @@
 // ドキュメントモデル(document.json)。唯一の正。座標はすべてPDF座標(pt、左下原点)。
 
-export const DOCUMENT_VERSION = 1
+/** プロジェクトの形式。2: 複数PDF・複数ページ、目次 + ページごとのファイル(design.md §3-37) */
+export const DOCUMENT_VERSION = 2
 
 /** PDFの変換行列 [a b c d e f]。x' = a·x + c·y + e, y' = b·x + d·y + f */
 export type Matrix = [number, number, number, number, number, number]
@@ -105,6 +106,8 @@ export interface Layer {
 
 export interface Page {
   id: string
+  /** 取り込み元のPDF(DocumentModel.sources の id) */
+  sourceId: string
   /** 元PDFでのページ番号(1始まり) */
   sourcePageNumber: number
   mediaBox: Rect
@@ -112,6 +115,7 @@ export interface Page {
 }
 
 export interface SourceInfo {
+  id: string
   /** プロジェクトフォルダからの相対パス(source/...) */
   file: string
   originalFileName: string
@@ -124,9 +128,38 @@ export interface SourceInfo {
   permissions: number[] | null
 }
 
+/**
+ * プロジェクト全体(画面とIPCで扱う形)。保存するときは、目次(ProjectManifest)と
+ * ページごとのファイル(PageFile)に分ける。
+ */
 export interface DocumentModel {
   version: typeof DOCUMENT_VERSION
   createdAt: string
-  source: SourceInfo
+  /** 取り込んだPDF */
+  sources: SourceInfo[]
+  /** 対象ページ。PDFを取り込むと、対象ページごとに処理層(背景・候補・確定)ができる */
   pages: Page[]
+}
+
+/** 目次(document.json)でのページ。レイヤーとオブジェクトは file に持つ */
+export interface PageRef {
+  id: string
+  sourceId: string
+  sourcePageNumber: number
+  mediaBox: Rect
+  /** プロジェクトフォルダからの相対パス(pages/<ページID>.json) */
+  file: string
+}
+
+/** document.json(目次) */
+export interface ProjectManifest {
+  version: typeof DOCUMENT_VERSION
+  createdAt: string
+  sources: SourceInfo[]
+  pages: PageRef[]
+}
+
+/** pages/<ページID>.json */
+export interface PageFile extends Page {
+  version: typeof DOCUMENT_VERSION
 }

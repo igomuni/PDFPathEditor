@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
-import type { OpenedProject } from '../../shared/ipc'
-import type { DocumentModel } from '../../shared/model'
+import type { AddedPages, OpenedProject } from '../../shared/ipc'
+import type { DocumentModel, Page } from '../../shared/model'
 import { History, type Command } from './history.ts'
 
 export interface Selection {
@@ -15,8 +15,10 @@ const EMPTY_SELECTION: Selection = { ids: [], node: null }
 export interface StoreState {
   projectDir: string | null
   document: DocumentModel | null
-  /** 最後に保存した時点のドキュメント。document と参照が違えば未保存 */
+  /** 最後に保存した時点のドキュメント。document と参照が違えば未保存。旧形式から読み替えた直後は null */
   savedDocument: DocumentModel | null
+  /** 表示・編集しているページ */
+  currentPageId: string | null
   canUndo: boolean
   canRedo: boolean
   /** 選択と表示モードは画面の状態で、ドキュメントには保存しない(Undo の対象外) */
@@ -31,6 +33,7 @@ class DocumentStore {
     projectDir: null,
     document: null,
     savedDocument: null,
+    currentPageId: null,
     canUndo: false,
     canRedo: false,
     selection: EMPTY_SELECTION,
@@ -60,8 +63,13 @@ class DocumentStore {
     const { selection } = this.state
     const ids = selection.ids.filter((id) => existing.has(id))
     const node = selection.node && existing.has(selection.node.objectId) ? selection.node : null
+    // 今のページがなくなっていたら、先頭のページにする
+    const currentPageId = document.pages.some((page) => page.id === this.state.currentPageId)
+      ? this.state.currentPageId
+      : (document.pages[0]?.id ?? null)
     this.state = {
       ...this.state,
+      currentPageId,
       selection: ids.length === selection.ids.length && node === selection.node ? selection : { ids, node },
       document,
       canUndo: this.history.canUndo,
@@ -75,7 +83,9 @@ class DocumentStore {
     this.state = {
       ...this.state,
       projectDir: project.projectDir,
-      savedDocument: project.document,
+      // 旧形式から読み替えたものは、新しい構成でまだ保存していないので未保存として扱う
+      savedDocument: project.migrated ? null : project.document,
+      currentPageId: project.document.pages[0]?.id ?? null,
       selection: EMPTY_SELECTION
     }
     this.setDocument(project.document)
@@ -105,12 +115,66 @@ class DocumentStore {
     this.history.seal()
   }
 
+  /** 今のページ */
+  currentPage(): Page | null {
+    const { document, currentPageId } = this.state
+    return document?.pages.find((page) => page.id === currentPageId) ?? document?.pages[0] ?? null
+  }
+
+  setCurrentPage(pageId: string): void {
+    if (pageId === this.state.currentPageId || !this.state.document?.pages.some((page) => page.id === pageId)) return
+    this.history.seal()
+    this.state = { ...this.state, currentPageId: pageId, selection: EMPTY_SELECTION }
+    this.emit()
+  }
+
+  /**
+   * 取り込みで増えたページを足す。ファイルは main が書き込み済みなので、保存済みの状態にも同じものを足す
+   * (履歴には積まない)。追加した最初のページへ切り替える。
+   */
+  appendPages(added: AddedPages): void {
+    const merge = (document: DocumentModel): DocumentModel => ({
+      ...document,
+      sources: added.sourceIsNew
+        ? [...document.sources, added.source]
+        : document.sources.map((source) => (source.id === added.source.id ? added.source : source)),
+      pages: [...document.pages, ...added.pages]
+    })
+    const { document, savedDocument } = this.state
+    if (!document) return
+    const next = merge(document)
+    this.state = {
+      ...this.state,
+      savedDocument: savedDocument === document ? next : savedDocument && merge(savedDocument),
+      currentPageId: added.pages[0]?.id ?? this.state.currentPageId,
+      selection: EMPTY_SELECTION
+    }
+    this.setDocument(next)
+  }
+
+  /** Undo / Redo で別のページだけが変わったら、そのページへ切り替える(変化が見えるように) */
+  private followChange(before: DocumentModel, after: DocumentModel): void {
+    const previous = new Map(before.pages.map((page) => [page.id, page]))
+    const changed = after.pages.filter((page) => previous.get(page.id) !== page)
+    if (changed.length > 0 && !changed.some((page) => page.id === this.state.currentPageId)) {
+      this.state = { ...this.state, currentPageId: changed[0].id, selection: EMPTY_SELECTION }
+    }
+  }
+
   undo(): void {
-    if (this.state.document) this.setDocument(this.history.undo(this.state.document))
+    const before = this.state.document
+    if (!before) return
+    const after = this.history.undo(before)
+    this.followChange(before, after)
+    this.setDocument(after)
   }
 
   redo(): void {
-    if (this.state.document) this.setDocument(this.history.redo(this.state.document))
+    const before = this.state.document
+    if (!before) return
+    const after = this.history.redo(before)
+    this.followChange(before, after)
+    this.setDocument(after)
   }
 
   markSaved(document: DocumentModel): void {

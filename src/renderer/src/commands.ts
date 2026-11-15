@@ -231,11 +231,12 @@ export function deleteObjects(document: DocumentModel, ids: readonly string[]): 
   )
 }
 
-/** 候補を確定レイヤーへ移す。ids を省略すると候補を全件確定する */
-export function confirmCandidates(document: DocumentModel, ids?: readonly string[]): Command | null {
+/** 候補を確定レイヤーへ移す。ids を省略すると候補を全件確定する。pageId を渡すと、そのページだけを対象にする */
+export function confirmCandidates(document: DocumentModel, ids?: readonly string[], pageId?: string): Command | null {
   const idSet = ids ? new Set(ids) : null
   const isTarget = (object: DocObject): boolean => !idSet || idSet.has(object.id)
   return objectsCommand(idSet ? '選択した候補の確定' : '候補の全件確定', document, (layer, page) => {
+    if (pageId !== undefined && page.id !== pageId) return null
     const moved = page.layers
       .filter((other) => other.kind === 'candidates')
       .flatMap((other) => other.objects.filter(isTarget))
@@ -272,9 +273,11 @@ export function updateObjects(document: DocumentModel, ids: readonly string[], p
 export function assignFieldCodes(
   document: DocumentModel,
   boundsOf: (object: DocObject) => Rect,
-  newId?: () => string
+  newId?: () => string,
+  pageId?: string
 ): { command: Command | null; summary: FieldCodeSummary } {
-  const plans = new Map(document.pages.map((page) => [page.id, planFieldCodes(page, boundsOf, newId)]))
+  const targets = document.pages.filter((page) => pageId === undefined || page.id === pageId)
+  const plans = new Map(targets.map((page) => [page.id, planFieldCodes(page, boundsOf, newId)]))
   const summary: FieldCodeSummary = { codes: 0, tagged: 0, cells: 0 }
   for (const plan of plans.values()) {
     summary.codes += plan.summary.codes
@@ -282,7 +285,8 @@ export function assignFieldCodes(
     summary.cells += plan.summary.cells
   }
   const command = objectsCommand('項目コードの割り当て', document, (layer, page) => {
-    const plan = plans.get(page.id)!
+    const plan = plans.get(page.id)
+    if (!plan) return null
     const added = plan.additions.get(layer.id) ?? []
     if (added.length === 0 && !layer.objects.some((object) => plan.patches.has(object.id))) return null
     const baseZ = layer.objects.reduce((max, object) => Math.max(max, object.z), -1) + 1

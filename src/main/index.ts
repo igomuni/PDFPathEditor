@@ -1,9 +1,10 @@
 import { basename, dirname, extname, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type MenuItemConstructorOptions } from 'electron'
-import { IPC, type DetectTarget, type ImportOptions, type MenuCommand, type OpenedProject, type RecentProject, type UnsavedChoice } from '../shared/ipc'
+import { IPC, type DetectTarget, type ImportOptions, type MenuCommand, type AddedPages, type OpenedProject, type RecentProject, type SavePayload, type UnsavedChoice } from '../shared/ipc'
 import type { PickedCorrections } from '../shared/corrections'
 import type { DocumentModel } from '../shared/model'
 import {
+  addPdf,
   exportDocument,
   exportReview,
   readCorrections,
@@ -139,6 +140,7 @@ function buildMenu(): void {
       label: 'ファイル',
       submenu: [
         item('PDFを取り込む…', 'CmdOrCtrl+I', 'import-pdf'),
+        { label: 'PDFを追加…', click: () => sendMenuCommand('add-pdf') },
         item('プロジェクトを開く…', 'CmdOrCtrl+O', 'open-project'),
         {
           label: '最近使ったプロジェクト',
@@ -244,7 +246,23 @@ function registerIpc(): void {
     const document = await importPdf(pdfPath, dest.filePath, options)
     await settings.rememberDir('projectParent', dirname(dest.filePath)).catch(() => {})
     await rememberProject(dest.filePath)
-    return { projectDir: dest.filePath, document }
+    return { projectDir: dest.filePath, document, migrated: false }
+  })
+
+  // 開いているプロジェクトに、PDFの対象ページを追加する
+  ipcMain.handle(IPC.addPdf, async (event, options: ImportOptions): Promise<AddedPages | null> => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return null
+    const projectDir = requireProjectDir()
+    const picked = await dialog.showOpenDialog(win, {
+      title: '追加するPDFを選択',
+      defaultPath: await settings.lastDir('pdf', app.getPath('documents')),
+      properties: ['openFile'],
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    })
+    if (picked.canceled || picked.filePaths.length === 0) return null
+    await settings.rememberDir('pdf', dirname(picked.filePaths[0])).catch(() => {})
+    return addPdf(projectDir, picked.filePaths[0], options)
   })
 
   ipcMain.handle(IPC.openProject, async (event): Promise<OpenedProject | null> => {
@@ -258,10 +276,10 @@ function registerIpc(): void {
     })
     if (picked.canceled || picked.filePaths.length === 0) return null
     const projectDir = picked.filePaths[0]
-    const document = await loadDocument(projectDir)
+    const loaded = await loadDocument(projectDir)
     await settings.rememberDir('projectParent', dirname(projectDir)).catch(() => {})
     await rememberProject(projectDir)
-    return { projectDir, document }
+    return { projectDir, ...loaded }
   })
 
   ipcMain.handle(IPC.openRecentProject, async (_event, dir: string): Promise<OpenedProject> => {
@@ -270,9 +288,9 @@ function registerIpc(): void {
       await refreshRecent()
       throw new Error(`最近使ったプロジェクトの一覧にありません: ${dir}`)
     }
-    const document = await loadDocument(dir)
+    const loaded = await loadDocument(dir)
     await rememberProject(dir)
-    return { projectDir: dir, document }
+    return { projectDir: dir, ...loaded }
   })
   ipcMain.on(IPC.setDirty, (event, dirty: boolean) => {
     documentDirty = dirty === true
@@ -290,8 +308,8 @@ function registerIpc(): void {
   ipcMain.handle(IPC.listRecentProjects, () => recentProjects.list())
   ipcMain.handle(IPC.clearRecentProjects, () => recentProjects.clear().then(refreshRecent))
 
-  ipcMain.handle(IPC.saveDocument, (_event, document: DocumentModel) =>
-    saveDocument(requireProjectDir(), document, resourcePaths())
+  ipcMain.handle(IPC.saveDocument, (_event, payload: SavePayload) =>
+    saveDocument(requireProjectDir(), payload, resourcePaths())
   )
 
   ipcMain.handle(IPC.exportDocument, (_event, document: DocumentModel) =>

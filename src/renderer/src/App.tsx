@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { DEFAULT_IMPORT_DPI, DEFAULT_IMPORT_PAGE, type MenuCommand, type RecentProject } from '../../shared/ipc'
+import { DEFAULT_IMPORT_DPI, DEFAULT_IMPORT_PAGE, DEFAULT_IMPORT_PAGES, type MenuCommand, type RecentProject } from '../../shared/ipc'
+import { diffPages, sourceOf, toManifest } from '../../shared/project'
 import { Canvas, type CanvasHandle, type CanvasStatus } from './Canvas'
 import type { OcrEngineId, OcrEngineInfo } from '../../shared/ocr'
 import {
@@ -30,9 +31,9 @@ function errorMessage(err: unknown): string {
 }
 
 export function App() {
-  const { document, projectDir, savedDocument, canUndo, canRedo, selection, diffMode, untaggedMode } = useStore()
+  const { document, projectDir, savedDocument, canUndo, canRedo, selection, diffMode, untaggedMode, currentPageId } = useStore()
   const canvasRef = useRef<CanvasHandle>(null)
-  const [pageNumber, setPageNumber] = useState(DEFAULT_IMPORT_PAGE)
+  const [pagesSpec, setPagesSpec] = useState(DEFAULT_IMPORT_PAGES)
   const [dpi, setDpi] = useState(DEFAULT_IMPORT_DPI)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -53,7 +54,8 @@ export function App() {
   }, [])
 
   const dirty = document !== savedDocument
-  const page = document?.pages[0] ?? null
+  const page = document?.pages.find((candidate) => candidate.id === currentPageId) ?? document?.pages[0] ?? null
+  const source = document && page ? sourceOf(document, page) : null
   const background = page?.layers.find((layer) => layer.kind === 'background') ?? null
   const candidates = page?.layers.find((layer) => layer.kind === 'candidates') ?? null
   const confirmed = page?.layers.find((layer) => layer.kind === 'confirmed') ?? null
@@ -114,9 +116,11 @@ export function App() {
 
   /** 保存する。失敗したら例外を投げる */
   const saveNow = useCallback(async (): Promise<void> => {
-    const current = store.getState().document
+    const { document: current, savedDocument: saved } = store.getState()
     if (!current) return
-    await window.api.saveDocument(current)
+    // 目次と、変更のあったページだけを書く
+    const { changed, removedIds } = diffPages(saved, current)
+    await window.api.saveDocument({ manifest: toManifest(current), pages: changed, removedPageIds: removedIds })
     store.markSaved(current)
   }, [])
 
@@ -134,10 +138,26 @@ export function App() {
     () =>
       run('PDFを取り込み中…', async () => {
         if (!(await resolveUnsaved())) return
-        const project = await window.api.importPdf({ pageNumber, dpi })
+        const project = await window.api.importPdf({ pages: pagesSpec, dpi })
         if (project) store.open(project)
       }),
-    [run, pageNumber, dpi, resolveUnsaved]
+    [run, pagesSpec, dpi, resolveUnsaved]
+  )
+
+  const addPdf = useCallback(
+    () =>
+      run('PDFを追加中…', async () => {
+        const state = store.getState()
+        if (!state.document) return
+        // 追加したページは main がファイルに書くので、先に画面の変更を保存しておく
+        if (state.document !== state.savedDocument) await saveNow()
+        const added = await window.api.addPdf({ pages: pagesSpec, dpi })
+        if (!added) return
+        store.appendPages(added)
+        const skipped = added.skippedPageNumbers.length > 0 ? `(取り込み済みの p.${added.skippedPageNumbers.join(', ')} は飛ばしました)` : ''
+        setInfo(`${added.source.originalFileName} の p.${added.pages.map((p) => p.sourcePageNumber).join(', ')} を追加しました${skipped}。`)
+      }),
+    [run, pagesSpec, dpi, saveNow]
   )
 
   const openProject = useCallback(
@@ -180,7 +200,10 @@ export function App() {
       run('出力して検証中…', async () => {
         const current = store.getState().document
         if (!current) return
-        const result = await window.api.exportDocument(current)
+        const target = store.currentPage()
+        if (!target) return
+        // 今のページだけを出力する
+        const result = await window.api.exportDocument({ ...current, pages: [target] })
         const percent = (value: number): string => `${(value * 100).toFixed(2)}%`
         const summary = result.pages
           .map((page) =>
@@ -199,7 +222,9 @@ export function App() {
       run('確認用データを書き出し中…', async () => {
         const current = store.getState().document
         if (!current) return
-        const result = await window.api.exportReview(current)
+        const target = store.currentPage()
+        if (!target) return
+        const result = await window.api.exportReview({ ...current, pages: [target] })
         setInfo(
           `${result.dir} に確認用データを書き出しました(テキスト ${result.textCount} 件、取れていないインク ${result.uncoveredCount} か所、背景に合っていないテキスト ${result.misfitCount} 件、ファイル ${result.files.length} 個)。`
         )
@@ -215,7 +240,10 @@ export function App() {
         const picked = await window.api.pickCorrections()
         if (!picked) return
         // 検証と計画だけ行い、適用はダイアログで確かめてから
-        setPendingCorrections({ fileName: picked.fileName, plan: planCorrections(current.pages, picked.data, fitTextToBox) })
+        const target = store.currentPage()
+        if (!target) return
+        // 今のページに適用する(修正ファイルの page が違えば、対象なしとして止める)
+        setPendingCorrections({ fileName: picked.fileName, plan: planCorrections([target], picked.data, fitTextToBox) })
       }),
     [run]
   )
@@ -237,7 +265,7 @@ export function App() {
   const detectLines = useCallback(
     () =>
       run('罫線を検出中…', async () => {
-        const current = store.getState().document?.pages[0]
+        const current = store.currentPage()
         const image = current?.layers
           .find((layer) => layer.kind === 'background')
           ?.objects.find((object) => object.type === 'image')
@@ -259,7 +287,7 @@ export function App() {
     () =>
       run('文字を検出中…', async () => {
         if (!ocrEngineId) return
-        const current = store.getState().document?.pages[0]
+        const current = store.currentPage()
         const image = current?.layers
           .find((layer) => layer.kind === 'background')
           ?.objects.find((object) => object.type === 'image')
@@ -284,7 +312,7 @@ export function App() {
   )
   const assignCodes = withDocument((current) => {
     // 文字の外形は画面のフォントで実測する
-    const { command, summary } = assignFieldCodes(current, objectBounds)
+    const { command, summary } = assignFieldCodes(current, objectBounds, undefined, store.currentPage()?.id)
     store.execute(command)
     setError(null)
     setInfo(
@@ -295,11 +323,11 @@ export function App() {
           : `印字された項目コード ${summary.codes} 件はすべて割り当て済みです。`
     )
   })
-  const confirmAll = withDocument((current) => store.execute(confirmCandidates(current)))
+  const confirmAll = withDocument((current) => store.execute(confirmCandidates(current, undefined, store.currentPage()?.id)))
   const deleteSelection = withDocument((current) => store.execute(deleteObjects(current, store.getState().selection.ids)))
-  const selectAll = withDocument((current) =>
+  const selectAll = withDocument(() =>
     store.select(
-      (current.pages[0]?.layers ?? [])
+      (store.currentPage()?.layers ?? [])
         .filter((layer) => layer.visible && !layer.locked)
         .flatMap((layer) => layer.objects.filter(isVisible).map((object) => object.id))
     )
@@ -308,6 +336,7 @@ export function App() {
   useEffect(() => {
     const handlers: Record<MenuCommand, () => void> = {
       'import-pdf': () => void importPdf(),
+      'add-pdf': () => void addPdf(),
       'open-project': () => void openProject(),
       save: () => void save(),
       export: () => void exportAll(),
@@ -330,7 +359,7 @@ export function App() {
       'zoom-100': () => canvasRef.current?.zoom100()
     }
     return window.api.onMenuCommand((command) => handlers[command]())
-  }, [importPdf, openProject, save, exportAll, exportReview, importCorrections, detectLines, detectText])
+  }, [importPdf, addPdf, openProject, save, exportAll, exportReview, importCorrections, detectLines, detectText])
 
   // 未保存かどうかを main に伝える(閉じるときの確認用)
   useEffect(() => {
@@ -359,10 +388,12 @@ export function App() {
       <label>
         ページ
         <input
-          type="number"
-          min={1}
-          value={pageNumber}
-          onChange={(e) => setPageNumber(Math.max(1, Math.trunc(e.target.valueAsNumber) || 1))}
+          type="text"
+          className="pages-spec"
+          value={pagesSpec}
+          onChange={(e) => setPagesSpec(e.target.value)}
+          title="取り込むページ。例: 2、1-3,5"
+          spellCheck={false}
         />
       </label>
       <label>
@@ -379,6 +410,11 @@ export function App() {
       <button onClick={() => void importPdf()} disabled={busy !== null}>
         PDFを取り込む…
       </button>
+      {document && (
+        <button onClick={() => void addPdf()} disabled={busy !== null} title="開いているプロジェクトに、PDFの指定したページを追加する(同じPDFなら元PDFは共有する)">
+          PDFを追加…
+        </button>
+      )}
       <button onClick={() => void openProject()} disabled={busy !== null}>
         プロジェクトを開く…
       </button>
@@ -409,6 +445,23 @@ export function App() {
     <div className="app">
       <header className="toolbar">
         {importControls}
+        {document && document.pages.length > 1 && page && (
+          <select
+            className="page-select"
+            value={page.id}
+            title="表示するページ"
+            onChange={(e) => {
+              store.setCurrentPage(e.target.value)
+              e.currentTarget.blur()
+            }}
+          >
+            {document.pages.map((candidate) => (
+              <option key={candidate.id} value={candidate.id}>
+                {sourceOf(document, candidate)?.originalFileName ?? '?'} p.{candidate.sourcePageNumber}
+              </option>
+            ))}
+          </select>
+        )}
         {document && background && (
           <>
             <span className="separator" />
@@ -676,10 +729,10 @@ export function App() {
             {selectionSummary && <span className="selection-summary">{selectionSummary}</span>}
             <span className="grow" />
             <span>
-              {document.source.originalFileName} p.{page.sourcePageNumber}/{document.source.pageCount}
+              {source?.originalFileName ?? '(元PDF不明)'} p.{page.sourcePageNumber}/{source?.pageCount ?? '?'}
             </span>
-            {document.source.encrypted && <span title="元PDFは暗号化されています。読み取りのみ行います">暗号化PDF(読み取り専用)</span>}
-            <span title={document.source.sha256}>sha256 {document.source.sha256.slice(0, 12)}…</span>
+            {source?.encrypted && <span title="元PDFは暗号化されています。読み取りのみ行います">暗号化PDF(読み取り専用)</span>}
+            {source && <span title={source.sha256}>sha256 {source.sha256.slice(0, 12)}…</span>}
           </>
         ) : (
           <span>プロジェクト未選択</span>

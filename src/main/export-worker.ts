@@ -49,7 +49,7 @@ async function exportDocument(req: ExportRequest): Promise<ExportResult> {
   }
   // 何かを書き出す前に、ファイル名に使う値を確かめる
   document.pages.forEach(pageLabel)
-  const dir = join(projectDir, 'exports')
+  const dir = req.outDir
   await mkdir(dir, { recursive: true })
   const book = new FontBook(req.fontDirs)
   const layout = createLayout(book)

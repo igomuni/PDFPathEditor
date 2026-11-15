@@ -82,11 +82,13 @@ try {
   await app.close()
 }
 
-const saved = JSON.parse(readFileSync(join(project, 'document.json'), 'utf8'))
-const all = saved.pages[0].layers.flatMap((layer) => layer.objects)
+const manifest = JSON.parse(readFileSync(join(project, 'document.json'), 'utf8'))
+const saved = JSON.parse(readFileSync(join(project, manifest.pages[0].file), 'utf8'))
+const exportsDir = join(project, 'exports', manifest.pages[0].id)
+const all = saved.layers.flatMap((layer) => layer.objects)
 const hiddenCount = all.filter((object) => object.visible === false).length
 check('非表示の状態が document.json に保存される', hiddenCount > 0 && all.filter((o) => o.type === 'text' && o.visible !== false).length <= 1, `非表示 ${hiddenCount} 件`)
-const exported = JSON.parse(readFileSync(join(project, 'exports/output.json'), 'utf8'))
+const exported = JSON.parse(readFileSync(join(exportsDir, 'output.json'), 'utf8'))
 check('JSON 出力に visible を含めず、非表示のものも出力する', exported.pages[0].objects.length >= hiddenCount && exported.pages[0].objects.every((object) => !('visible' in object)), `出力 ${exported.pages[0].objects.length} 件`)
 
 // 開き直して、非表示が残っていること。全部表示に戻して出力し、数値が同じこと
@@ -94,13 +96,13 @@ app = await launch({ env: { E2E_PROJECT: project, E2E_MESSAGE: '1' } })
 try {
   await open(app)
   check('開き直しても非表示が残る', (await count(app, 'svg [data-layer-kind=confirmed] text')) <= 1)
-  const before = JSON.parse(readFileSync(join(project, 'exports/verify.json'), 'utf8')).pages[0].metrics
+  const before = JSON.parse(readFileSync(join(exportsDir, 'verify.json'), 'utf8')).pages[0].metrics
   await app.evaluate(`[...document.querySelectorAll('.object-list .bulk button')].find((b) => b.textContent.trim() === '表示').click()`)
   await app.sleep(300)
   check('まとめて表示に戻せる', (await count(app, 'svg [data-layer-kind=confirmed] text')) > 100)
   await app.click('出力')
   await app.waitIdle()
-  const after = JSON.parse(readFileSync(join(project, 'exports/verify.json'), 'utf8')).pages[0].metrics
+  const after = JSON.parse(readFileSync(join(exportsDir, 'verify.json'), 'utf8')).pages[0].metrics
   check('表示/非表示で出力の数値が変わらない', before.recall === after.recall && before.excess === after.excess && before.outputInk === after.outputInk, `再現率 ${before.recall.toFixed(4)} / ${after.recall.toFixed(4)}`)
   if (shots) await app.screenshot(join(shots, 'object-list.png'))
   check('コンソールエラーがない', app.consoleErrors.length === 0, app.consoleErrors.join(' / '))

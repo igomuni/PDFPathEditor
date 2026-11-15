@@ -1,8 +1,9 @@
-import type { DocumentModel, ImageObject, Matrix } from './model'
+import type { DocumentModel, ImageObject, Matrix, Page, ProjectManifest, SourceInfo } from './model'
 import type { OcrEngineId } from './ocr'
 
 export const IPC = {
   importPdf: 'project:import-pdf',
+  addPdf: 'project:add-pdf',
   openProject: 'project:open',
   openRecentProject: 'project:open-recent',
   listRecentProjects: 'project:list-recent',
@@ -33,16 +34,37 @@ export const IPC = {
 } as const
 
 export const DEFAULT_IMPORT_PAGE = 2
+export const DEFAULT_IMPORT_PAGES = String(DEFAULT_IMPORT_PAGE)
 export const DEFAULT_IMPORT_DPI = 300
 
 export interface ImportOptions {
-  pageNumber: number
+  /** 取り込むページ。「2」「1-3,5」の形(src/shared/project.ts の parsePageSpec) */
+  pages: string
   dpi: number
 }
 
 export interface OpenedProject {
   projectDir: string
   document: DocumentModel
+  /** 旧形式から読み替えた(まだ新しい構成では保存していない) */
+  migrated: boolean
+}
+
+/** 保存する内容。目次と、変更のあったページだけを送る */
+export interface SavePayload {
+  manifest: ProjectManifest
+  pages: Page[]
+  /** 目次から消えたページ(ページのファイルを消す) */
+  removedPageIds: string[]
+}
+
+/** 開いているプロジェクトに追加したページ。目次とページのファイルは書き込み済み */
+export interface AddedPages {
+  source: SourceInfo
+  sourceIsNew: boolean
+  pages: Page[]
+  /** すでに取り込み済みで飛ばしたページ番号 */
+  skippedPageNumbers: number[]
 }
 
 /** 未保存の変更の扱い */
@@ -57,6 +79,7 @@ export interface RecentProject {
 
 export type MenuCommand =
   | 'import-pdf'
+  | 'add-pdf'
   | 'open-project'
   | 'save'
   | 'export'
@@ -126,6 +149,9 @@ export interface OcrRequest {
 
 export interface ExportRequest {
   projectDir: string
+  /** 出力先(プロジェクトの exports/<ページID>/) */
+  outDir: string
+  /** 出力するページだけを pages に入れたドキュメント */
   document: DocumentModel
   /** フォントを探すフォルダ(先のものを優先) */
   fontDirs: string[]

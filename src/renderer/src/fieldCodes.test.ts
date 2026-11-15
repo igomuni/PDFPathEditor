@@ -68,21 +68,25 @@ function layer(kind: LayerKind, objects: DocObject[]): Layer {
 
 function makeDocument(candidates: DocObject[], confirmed: DocObject[] = []): DocumentModel {
   return {
-    version: 1,
+    version: 2,
     createdAt: '',
-    source: {
-      file: '',
-      originalFileName: '',
-      sha256: '',
-      byteLength: 0,
-      pageCount: 1,
-      encrypted: false,
-      encryptFilter: null,
-      permissions: null
-    },
+    sources: [
+      {
+        id: 'src-1',
+        file: '',
+        originalFileName: '',
+        sha256: '',
+        byteLength: 0,
+        pageCount: 1,
+        encrypted: false,
+        encryptFilter: null,
+        permissions: null
+      }
+    ],
     pages: [
       {
         id: 'page-1',
+        sourceId: 'src-1',
         sourcePageNumber: 1,
         mediaBox: [0, 0, 595, 842],
         layers: [layer('background', []), layer('candidates', candidates), layer('confirmed', confirmed)]

@@ -9,21 +9,34 @@ import { BUNDLED_FONTS, DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT, type FontFace 
 import type { PickedCorrections, ReviewExportResult } from '../shared/corrections'
 import type { ExportResult } from '../shared/export'
 import type {
+  AddedPages,
   DetectTarget,
   ExportRequest,
   ImportOptions,
+  SavePayload,
   OcrRequest,
   RasterizeRequest,
   RasterizeResult,
   VectorizeRequest,
   WorkerReply
 } from '../shared/ipc'
-import { DOCUMENT_VERSION, type DocumentModel, type Layer, type LayerKind, type PathObject, type TextObject } from '../shared/model'
+import {
+  DOCUMENT_VERSION,
+  type DocumentModel,
+  type Layer,
+  type LayerKind,
+  type Page,
+  type PathObject,
+  type ProjectManifest,
+  type SourceInfo,
+  type TextObject
+} from '../shared/model'
+import { fromPageFile, isSafeId, migrateV1, newPageId, newSourceId, pageFileName, parsePageSpec, toManifest, toPageFile } from '../shared/project'
 import type { OcrEngineId, OcrEngineInfo, TextDraft } from '../shared/ocr'
 import type { PathDraft } from '../shared/vectorizer'
 
 const DOCUMENT_FILE = 'document.json'
-const SUBDIRS = ['source', 'assets', 'fonts', 'exports'] as const
+const SUBDIRS = ['source', 'assets', 'pages', 'fonts', 'exports'] as const
 const POINTS_PER_INCH = 72
 
 function sha256File(path: string): Promise<string> {
@@ -68,119 +81,218 @@ async function assertEmptyOrMissing(dir: string): Promise<void> {
   }
 }
 
-export async function importPdf(
+function validateDpi(dpi: number): void {
+  if (!Number.isFinite(dpi) || dpi < 36 || dpi > 1200) throw new Error('dpi は 36〜1200 で指定してください')
+}
+
+const shortId = (): string => randomUUID().slice(0, 8)
+
+async function writeJson(path: string, value: unknown): Promise<void> {
+  await mkdir(dirname(path), { recursive: true })
+  const temp = `${path}.tmp`
+  await writeFile(temp, JSON.stringify(value, null, 2) + '\n', 'utf8')
+  await rename(temp, path)
+}
+
+/**
+ * 元PDFを無変更で source/<sourceId>/ にコピーし、読み取り専用にする。復号済みPDFは保存しない。
+ * 同じPDF(SHA-256 が同じ)が取り込み済みなら、それを使う。
+ */
+async function ensureSource(
   pdfPath: string,
   projectDir: string,
-  options: ImportOptions
-): Promise<DocumentModel> {
-  const { pageNumber, dpi } = options
-  if (!Number.isInteger(pageNumber) || pageNumber < 1) throw new Error('ページ番号が不正です')
-  if (!Number.isFinite(dpi) || dpi < 36 || dpi > 1200) throw new Error('dpi は 36〜1200 で指定してください')
+  existing: readonly SourceInfo[]
+): Promise<{ source: SourceInfo; isNew: boolean }> {
+  const originalSha256 = await sha256File(pdfPath)
+  const known = existing.find((source) => source.sha256 === originalSha256)
+  if (known) return { source: known, isNew: false }
 
+  const id = newSourceId(shortId())
+  const originalFileName = basename(pdfPath)
+  const file = `source/${id}/${originalFileName}`
+  const abs = join(projectDir, file)
+  await mkdir(dirname(abs), { recursive: true })
+  await copyFile(pdfPath, abs)
+  await chmod(abs, 0o444)
+  const [sha256, sourceStat] = await Promise.all([sha256File(abs), stat(abs)])
+  if (sha256 !== originalSha256) throw new Error('元PDFのコピーでハッシュが一致しませんでした')
+  return {
+    // ページ数と暗号化の情報は、最初のページをラスタライズしたときに埋める
+    source: { id, file, originalFileName, sha256, byteLength: sourceStat.size, pageCount: 0, encrypted: false, encryptFilter: null, permissions: null },
+    isNew: true
+  }
+}
+
+/** 対象ページを背景ラスターにして、ページごとの処理層(背景・候補・確定)を作る */
+async function buildPages(
+  projectDir: string,
+  source: SourceInfo,
+  pageNumbers: readonly number[],
+  dpi: number
+): Promise<{ source: SourceInfo; pages: Page[] }> {
+  const pages: Page[] = []
+  let filled = source
+  for (const pageNumber of pageNumbers) {
+    const pageId = newPageId(pageNumber, shortId())
+    const assetRel = `assets/${pageId}/background-${dpi}dpi.png`
+    await mkdir(join(projectDir, 'assets', pageId), { recursive: true })
+    const raster = await runWorker<RasterizeRequest, RasterizeResult>('rasterize-worker.js', 'PDF Rasterizer', {
+      pdfPath: join(projectDir, source.file),
+      pageNumber,
+      dpi,
+      outPngPath: join(projectDir, assetRel)
+    })
+    filled = {
+      ...filled,
+      pageCount: raster.pageCount,
+      encrypted: raster.encryptFilter !== null,
+      encryptFilter: raster.encryptFilter,
+      permissions: raster.permissions
+    }
+
+    // 画像の左上をページの左上に合わせて配置する
+    const [x0, , , y1] = raster.mediaBox
+    const widthPt = (raster.pixelWidth * POINTS_PER_INCH) / dpi
+    const heightPt = (raster.pixelHeight * POINTS_PER_INCH) / dpi
+    const background = newLayer('background', '背景ラスター', true)
+    background.objects.push({
+      id: `obj-${randomUUID()}`,
+      type: 'image',
+      role: 'background',
+      fieldCode: null,
+      transform: [widthPt, 0, 0, heightPt, x0, y1 - heightPt],
+      z: 0,
+      tags: [],
+      meta: { dpi, sourcePageNumber: pageNumber },
+      asset: assetRel,
+      pixelWidth: raster.pixelWidth,
+      pixelHeight: raster.pixelHeight
+    })
+    pages.push({
+      id: pageId,
+      sourceId: source.id,
+      sourcePageNumber: pageNumber,
+      mediaBox: raster.mediaBox,
+      layers: [background, newLayer('candidates', '自動抽出の候補', false), newLayer('confirmed', '確定オブジェクト', false)]
+    })
+  }
+  return { source: filled, pages }
+}
+
+/** 取り込みに失敗したとき、今回作ったページのファイルと、新しくコピーした元PDFを消す */
+async function discardImport(projectDir: string, source: SourceInfo | null, sourceIsNew: boolean): Promise<void> {
+  if (!source) return
+  // 作りかけのページのアセット(ページIDは今回振ったものなので、フォルダごと消してよい)は buildPages の途中で
+  // 止まると特定できないため、目次に載っていないアセットのフォルダを消す
+  const manifest = await readManifest(projectDir).catch(() => null)
+  const known = new Set((manifest?.pages ?? []).map((page) => page.id))
+  for (const name of await readdir(join(projectDir, 'assets')).catch(() => [] as string[])) {
+    if (name.startsWith('page-') && !known.has(name)) await rm(join(projectDir, 'assets', name), { recursive: true, force: true })
+  }
+  if (sourceIsNew) {
+    const dir = join(projectDir, 'source', source.id)
+    await chmod(join(projectDir, source.file), 0o644).catch(() => {})
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+/** 新しいプロジェクトを作り、PDFの対象ページを取り込む */
+export async function importPdf(pdfPath: string, projectDir: string, options: ImportOptions): Promise<DocumentModel> {
+  validateDpi(options.dpi)
+  const pageNumbers = parsePageSpec(options.pages)
   await assertEmptyOrMissing(projectDir)
   try {
-    return await buildProject(pdfPath, projectDir, pageNumber, dpi)
+    for (const sub of SUBDIRS) await mkdir(join(projectDir, sub), { recursive: true })
+    const { source } = await ensureSource(pdfPath, projectDir, [])
+    const built = await buildPages(projectDir, source, pageNumbers, options.dpi)
+    const document: DocumentModel = {
+      version: DOCUMENT_VERSION,
+      createdAt: new Date().toISOString(),
+      sources: [built.source],
+      pages: built.pages
+    }
+    await saveDocument(projectDir, { manifest: toManifest(document), pages: document.pages, removedPageIds: [] })
+    return document
   } catch (err) {
     // 失敗したら作りかけを残さない。作成先は空だと確認済みなので、消すのは今回作ったものだけ
     for (const name of [...SUBDIRS, DOCUMENT_FILE, `${DOCUMENT_FILE}.tmp`]) {
-      await rm(join(projectDir, name), { recursive: true, force: true })
+      const target = join(projectDir, name)
+      // 読み取り専用にした元PDFも消せるようにする
+      if (name === 'source') {
+        for (const dir of await readdir(target).catch(() => [] as string[])) {
+          for (const file of await readdir(join(target, dir)).catch(() => [] as string[])) await chmod(join(target, dir, file), 0o644).catch(() => {})
+        }
+      }
+      await rm(target, { recursive: true, force: true })
     }
     await rmdir(projectDir).catch(() => {})
     throw err
   }
 }
 
-async function buildProject(
-  pdfPath: string,
-  projectDir: string,
-  pageNumber: number,
-  dpi: number
-): Promise<DocumentModel> {
-  for (const sub of SUBDIRS) await mkdir(join(projectDir, sub), { recursive: true })
-
-  // 元PDFは無変更でコピーし、読み取り専用にする。復号済みPDFは保存しない
-  const originalFileName = basename(pdfPath)
-  const sourceRel = `source/${originalFileName}`
-  const sourceAbs = join(projectDir, sourceRel)
-  await copyFile(pdfPath, sourceAbs)
-  await chmod(sourceAbs, 0o444)
-  const [sha256, originalSha256, sourceStat] = await Promise.all([
-    sha256File(sourceAbs),
-    sha256File(pdfPath),
-    stat(sourceAbs)
-  ])
-  if (sha256 !== originalSha256) throw new Error('元PDFのコピーでハッシュが一致しませんでした')
-
-  const assetRel = `assets/page-${String(pageNumber).padStart(4, '0')}-background-${dpi}dpi.png`
-  const raster = await runWorker<RasterizeRequest, RasterizeResult>('rasterize-worker.js', 'PDF Rasterizer', {
-    pdfPath: sourceAbs,
-    pageNumber,
-    dpi,
-    outPngPath: join(projectDir, assetRel)
-  })
-
-  // 画像の左上をページの左上に合わせて配置する
-  const [x0, , , y1] = raster.mediaBox
-  const widthPt = (raster.pixelWidth * POINTS_PER_INCH) / dpi
-  const heightPt = (raster.pixelHeight * POINTS_PER_INCH) / dpi
-  const background = newLayer('background', '背景ラスター', true)
-  background.objects.push({
-    id: `obj-${randomUUID()}`,
-    type: 'image',
-    role: 'background',
-    fieldCode: null,
-    transform: [widthPt, 0, 0, heightPt, x0, y1 - heightPt],
-    z: 0,
-    tags: [],
-    meta: { dpi, sourcePageNumber: pageNumber },
-    asset: assetRel,
-    pixelWidth: raster.pixelWidth,
-    pixelHeight: raster.pixelHeight
-  })
-
-  const document: DocumentModel = {
-    version: DOCUMENT_VERSION,
-    createdAt: new Date().toISOString(),
-    source: {
-      file: sourceRel,
-      originalFileName,
-      sha256,
-      byteLength: sourceStat.size,
-      pageCount: raster.pageCount,
-      encrypted: raster.encryptFilter !== null,
-      encryptFilter: raster.encryptFilter,
-      permissions: raster.permissions
-    },
-    pages: [
-      {
-        id: `page-${randomUUID()}`,
-        sourcePageNumber: pageNumber,
-        mediaBox: raster.mediaBox,
-        layers: [
-          background,
-          newLayer('candidates', '自動抽出の候補', false),
-          newLayer('confirmed', '確定オブジェクト', false),
-          newLayer('diff', '差分オーバーレイ', true)
-        ]
-      }
-    ]
+/**
+ * 開いているプロジェクトに、PDFの対象ページを追加する。同じPDFが取り込み済みなら元PDFは共有する。
+ * 目次とページのファイルはここで書く(保存済みの状態に足す)。呼ぶ前に、画面の変更は保存しておくこと。
+ */
+export async function addPdf(projectDir: string, pdfPath: string, options: ImportOptions): Promise<AddedPages> {
+  validateDpi(options.dpi)
+  const requested = parsePageSpec(options.pages)
+  const manifest = await readManifest(projectDir)
+  if (!manifest) throw new Error('プロジェクトが新しい形式で保存されていません。先に保存してください')
+  let source: SourceInfo | null = null
+  let sourceIsNew = false
+  try {
+    ;({ source, isNew: sourceIsNew } = await ensureSource(pdfPath, projectDir, manifest.sources))
+    const sourceId = source.id
+    const taken = new Set(manifest.pages.filter((page) => page.sourceId === sourceId).map((page) => page.sourcePageNumber))
+    const pageNumbers = requested.filter((pageNumber) => !taken.has(pageNumber))
+    if (pageNumbers.length === 0) throw new Error(`指定したページはすべて取り込み済みです: ${requested.join(', ')}`)
+    const built = await buildPages(projectDir, source, pageNumbers, options.dpi)
+    const sources = sourceIsNew ? [...manifest.sources, built.source] : manifest.sources
+    for (const page of built.pages) await writeJson(join(projectDir, pageFileName(page.id)), toPageFile(page))
+    const added = toManifest({ version: DOCUMENT_VERSION, createdAt: manifest.createdAt, sources, pages: built.pages })
+    await writeJson(join(projectDir, DOCUMENT_FILE), { ...manifest, sources, pages: [...manifest.pages, ...added.pages] })
+    return { source: built.source, sourceIsNew, pages: built.pages, skippedPageNumbers: requested.filter((pageNumber) => taken.has(pageNumber)) }
+  } catch (err) {
+    await discardImport(projectDir, source, sourceIsNew)
+    throw err
   }
-  await saveDocument(projectDir, document)
-  return document
 }
 
-export async function loadDocument(projectDir: string): Promise<DocumentModel> {
-  const text = await readFile(join(projectDir, DOCUMENT_FILE), 'utf8').catch(
-    (err: NodeJS.ErrnoException) => {
-      if (err.code === 'ENOENT') throw new Error(`${DOCUMENT_FILE} がありません: ${projectDir}`)
+/** 目次(version 2 の document.json)を読む。version 1 なら null */
+async function readManifest(projectDir: string): Promise<ProjectManifest | null> {
+  const raw = JSON.parse(await readFile(join(projectDir, DOCUMENT_FILE), 'utf8')) as { version?: unknown }
+  if (raw.version === 1) return null
+  if (raw.version !== DOCUMENT_VERSION) throw new Error(`未対応の document.json バージョンです: ${String(raw.version)}`)
+  const manifest = raw as ProjectManifest
+  if (!Array.isArray(manifest.sources) || !Array.isArray(manifest.pages)) throw new Error('document.json の形式が正しくありません')
+  for (const page of manifest.pages) if (!isSafeId(page.id)) throw new Error(`ページIDが正しくありません: ${String(page.id)}`)
+  return manifest
+}
+
+/**
+ * プロジェクトを読む。version 1(1つのPDF、document.json に全部入り)は今の形に読み替える。
+ * 読み替えただけではファイルは書き換えない(migrated = true を返し、次の保存で新しい構成にする)。
+ */
+export async function loadDocument(projectDir: string): Promise<{ document: DocumentModel; migrated: boolean }> {
+  const text = await readFile(join(projectDir, DOCUMENT_FILE), 'utf8').catch((err: NodeJS.ErrnoException) => {
+    if (err.code === 'ENOENT') throw new Error(`${DOCUMENT_FILE} がありません: ${projectDir}`)
+    throw err
+  })
+  const raw = JSON.parse(text) as { version?: unknown }
+  if (raw.version === 1) return { document: migrateV1(raw as Parameters<typeof migrateV1>[0]), migrated: true }
+  const manifest = await readManifest(projectDir)
+  if (!manifest) throw new Error(`未対応の document.json バージョンです: ${String(raw.version)}`)
+  const pages: Page[] = []
+  for (const ref of manifest.pages) {
+    const file = join(projectDir, pageFileName(ref.id))
+    const content = await readFile(file, 'utf8').catch((err: NodeJS.ErrnoException) => {
+      if (err.code === 'ENOENT') throw new Error(`ページのファイルがありません: ${pageFileName(ref.id)}`)
       throw err
-    }
-  )
-  const document = JSON.parse(text) as DocumentModel
-  if (document.version !== DOCUMENT_VERSION) {
-    throw new Error(`未対応の document.json バージョンです: ${String(document.version)}`)
+    })
+    pages.push(fromPageFile(JSON.parse(content), ref))
   }
-  return document
+  return { document: { version: DOCUMENT_VERSION, createdAt: manifest.createdAt, sources: manifest.sources, pages }, migrated: false }
 }
 
 const exists = (path: string): Promise<boolean> =>
@@ -210,9 +322,9 @@ export async function readFont(resources: ResourcePaths, file: string): Promise<
 }
 
 /** Text が使っているフォントを、埋め込み用にプロジェクトの fonts/ へコピーする */
-async function copyUsedFonts(projectDir: string, document: DocumentModel, resources: ResourcePaths): Promise<void> {
+async function copyUsedFonts(projectDir: string, pages: readonly Page[], resources: ResourcePaths): Promise<void> {
   const used = new Set<string>()
-  for (const page of document.pages) {
+  for (const page of pages) {
     for (const layer of page.layers) {
       for (const object of layer.objects) {
         if (object.type !== 'text') continue
@@ -231,16 +343,29 @@ async function copyUsedFonts(projectDir: string, document: DocumentModel, resour
   }
 }
 
-export async function saveDocument(
-  projectDir: string,
-  document: DocumentModel,
-  resources?: ResourcePaths
-): Promise<void> {
-  if (resources) await copyUsedFonts(projectDir, document, resources)
+/**
+ * 保存する。目次(document.json)と、変更のあったページのファイル(pages/<ページID>.json)だけを書く。
+ * version 1 の document.json が残っていれば、document.v1.json として取っておく。
+ */
+export async function saveDocument(projectDir: string, payload: SavePayload, resources?: ResourcePaths): Promise<void> {
+  const { manifest, pages, removedPageIds } = payload
+  if (manifest.version !== DOCUMENT_VERSION) throw new Error(`未対応のバージョンです: ${String(manifest.version)}`)
+  const listed = new Set(manifest.pages.map((page) => page.id))
+  for (const page of pages) {
+    if (!listed.has(page.id)) throw new Error(`目次にないページは保存できません: ${page.id}`)
+  }
+  if (resources) await copyUsedFonts(projectDir, pages, resources)
+  for (const page of pages) await writeJson(join(projectDir, pageFileName(page.id)), toPageFile(page))
+
   const target = join(projectDir, DOCUMENT_FILE)
-  const temp = `${target}.tmp`
-  await writeFile(temp, JSON.stringify(document, null, 2) + '\n', 'utf8')
-  await rename(temp, target)
+  const backup = join(projectDir, 'document.v1.json')
+  const current = await readFile(target, 'utf8').then((text) => JSON.parse(text) as { version?: unknown }, () => null)
+  if (current?.version === 1 && !(await exists(backup))) await copyFile(target, backup)
+  // ページのファイルは目次から作り直す(渡された file は使わない)
+  await writeJson(target, { ...manifest, pages: manifest.pages.map((page) => ({ ...page, file: pageFileName(page.id) })) })
+  for (const id of removedPageIds) {
+    if (!listed.has(id)) await rm(join(projectDir, pageFileName(id)), { force: true })
+  }
 }
 
 function resolveAsset(projectDir: string, assetRel: string): string {
@@ -314,9 +439,17 @@ export async function detectText(
   return drafts.map((draft, index) => ({ id: `obj-${randomUUID()}`, ...draft, z: index }))
 }
 
+/** 出力先。1ページだけならそのページのフォルダ、複数ページなら exports/all/ */
+function exportDir(projectDir: string, document: DocumentModel): string {
+  if (document.pages.length === 0) throw new Error('出力するページがありません')
+  const name = document.pages.length === 1 ? document.pages[0].id : 'all'
+  if (!isSafeId(name)) throw new Error(`ページIDが正しくありません: ${String(name)}`)
+  return join(projectDir, 'exports', name)
+}
+
 /**
- * 確定オブジェクトを exports/ に PDF / SVG / JSON として出力し、背景との差分を検証する。
- * 画面上のドキュメント(未保存の変更を含む)をそのまま出力する。
+ * 確定オブジェクトを exports/<ページID>/ に PDF / SVG / JSON として出力し、背景との差分を検証する。
+ * document には出力するページだけを入れる。画面上の状態(未保存の変更を含む)をそのまま出力する。
  */
 export async function exportDocument(
   projectDir: string,
@@ -325,12 +458,13 @@ export async function exportDocument(
 ): Promise<ExportResult> {
   return runWorker<ExportRequest, ExportResult>('export-worker.js', 'Export', {
     projectDir,
+    outDir: exportDir(projectDir, document),
     document,
     fontDirs: [join(projectDir, 'fonts'), resources.fontsDir]
   })
 }
 
-/** AI などに候補を確認してもらうためのデータ(候補の一覧とタイル画像)を exports/review/ に書き出す */
+/** AI などに候補を確認してもらうためのデータ(候補の一覧とタイル画像)を exports/<ページID>/review/ に書き出す */
 export async function exportReview(
   projectDir: string,
   document: DocumentModel,
@@ -338,6 +472,7 @@ export async function exportReview(
 ): Promise<ReviewExportResult> {
   return runWorker<ExportRequest, ReviewExportResult>('review-worker.js', 'Review', {
     projectDir,
+    outDir: exportDir(projectDir, document),
     document,
     fontDirs: [join(projectDir, 'fonts'), resources.fontsDir]
   })

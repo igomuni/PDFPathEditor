@@ -226,7 +226,7 @@ async function exportReview(req: ExportRequest): Promise<ReviewExportResult> {
     tag(`T${row.index}`, x0 - 3, y1 + 28, '#e07000')
   }
 
-  const dir = join(projectDir, 'exports', 'review')
+  const dir = join(req.outDir, 'review')
   await mkdir(dir, { recursive: true })
   const files: string[] = []
   const tiles: { file: string; box: Rect }[] = []

@@ -73,7 +73,10 @@ export function writePdf(document: DocumentModel, book: FontBook, layout: Layout
   return new Promise((resolvePromise, reject) => {
     const pdf = new PDFDocument({
       autoFirstPage: false,
-      info: { Title: document.source.originalFileName, Creator: 'PDFPathEditor' }
+      info: {
+        Title: document.sources.find((source) => source.id === document.pages[0]?.sourceId)?.originalFileName ?? 'PDFPathEditor',
+        Creator: 'PDFPathEditor'
+      }
     })
     const stream = createWriteStream(outPath)
     stream.on('finish', resolvePromise)
