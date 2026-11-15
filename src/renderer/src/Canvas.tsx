@@ -11,6 +11,7 @@ import {
   pageSize,
   panBy,
   pathData,
+  pdfToSvg,
   pdfToSvgMatrix,
   rectsIntersect,
   svgToPdf,
@@ -19,6 +20,7 @@ import {
   type Point,
   type View
 } from './coords'
+import { isVisible, revealRect } from './objectList'
 import { store, type Selection } from './store'
 import { cssFontFamily, textLocalBox } from './textMetrics'
 
@@ -27,6 +29,8 @@ export interface CanvasHandle {
   zoomOut(): void
   zoomFit(): void
   zoom100(): void
+  /** rect(PDF座標)が画面の外にあれば、中央に来るよう表示位置を動かす */
+  reveal(rect: Rect): void
 }
 
 export interface CanvasStatus {
@@ -190,7 +194,8 @@ function LayerView({ layer, scale, diffMode }: { layer: Layer; scale: number; di
       style={diffMode && !isBackground ? { mixBlendMode: 'multiply' } : undefined}
       data-layer-kind={layer.kind}
     >
-      {[...layer.objects]
+      {layer.objects
+        .filter(isVisible)
         .sort((a, b) => a.z - b.z)
         .map((object) =>
           object.type === 'path' ? (
@@ -288,7 +293,11 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
 
   // 選択・編集できるのは、表示中でロックされていないレイヤーのオブジェクトだけ
   const editableObjects = useMemo(
-    () => page.layers.filter((layer) => layer.visible && !layer.locked).flatMap((layer) => layer.objects),
+    () =>
+      page.layers
+        .filter((layer) => layer.visible && !layer.locked)
+        .flatMap((layer) => layer.objects)
+        .filter(isVisible),
     [page.layers]
   )
   const selectedObjects = useMemo(() => {
@@ -338,7 +347,14 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     zoomIn: () => setView((v) => v && zoomAt(v, center(), v.scale * ZOOM_STEP)),
     zoomOut: () => setView((v) => v && zoomAt(v, center(), v.scale / ZOOM_STEP)),
     zoomFit: () => size && setView(fitPage(page.mediaBox, size)),
-    zoom100: () => size && setView(centerPage(page.mediaBox, size, CSS_PX_PER_PT))
+    zoom100: () => size && setView(centerPage(page.mediaBox, size, CSS_PX_PER_PT)),
+    reveal: (rect) => {
+      if (!size) return
+      const [x0, y0, x1, y1] = rect
+      const a = pdfToSvg(page.mediaBox, { x: x0, y: y1 })
+      const b = pdfToSvg(page.mediaBox, { x: x1, y: y0 })
+      setView((v) => v && revealRect(v, size, [a.x, a.y, b.x, b.y]))
+    }
   }))
 
   // wheel は preventDefault が要るので passive: false で直接登録する

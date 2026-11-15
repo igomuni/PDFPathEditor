@@ -27,6 +27,11 @@ interface ObjectBase {
   role: ObjectRole
   /** 項目コード(G01 等)。未付与は null */
   fieldCode: string | null
+  /**
+   * 画面に表示するか。省略は表示。非表示のオブジェクトは画面に出ず選択もできないが、
+   * 出力(PDF / SVG / JSON)には影響しない(design.md §3-38)
+   */
+  visible?: boolean
   transform: Matrix
   /** レイヤー内のZ順(大きいほど手前) */
   z: number

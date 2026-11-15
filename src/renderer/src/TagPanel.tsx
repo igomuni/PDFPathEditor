@@ -4,7 +4,7 @@ import { updateObjects } from './commands'
 import type { ObjectPatch } from './fieldCodes'
 import { store } from './store'
 
-const ROLE_LABELS: Record<ObjectRole, string> = {
+export const ROLE_LABELS: Record<ObjectRole, string> = {
   background: '背景',
   frame: '枠・罫線',
   label: 'ラベル',

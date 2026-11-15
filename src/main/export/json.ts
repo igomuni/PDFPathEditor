@@ -4,7 +4,7 @@ import { exportBounds, exportedObjects, type LayoutText } from './layout.ts'
 
 export const EXPORT_JSON_VERSION = 1
 
-type Attributes<T> = Omit<T, 'z' | 'meta'>
+type Attributes<T> = Omit<T, 'z' | 'meta' | 'visible'>
 
 export type ExportedObject = Attributes<DocObject> & {
   /** ページ上の外接矩形 [x0, y0, x1, y1] */
@@ -53,8 +53,8 @@ export function buildExportJson(document: DocumentModel, layout: LayoutText): Ex
             field.printedCodes.push({ id: object.id, text: object.type === 'text' ? object.text : null, bounds })
           }
         }
-        // z は並び順で表し、作業用の meta は出さない
-        const { z: _z, meta: _meta, ...attributes } = object
+        // z は並び順で表し、作業用の meta と画面の表示状態は出さない
+        const { z: _z, meta: _meta, visible: _visible, ...attributes } = object
         return { ...attributes, bounds }
       })
       const sorted = [...fields.entries()].sort((a, b) => a[0].localeCompare(b[0], 'en', { numeric: true }))

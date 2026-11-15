@@ -17,6 +17,8 @@ import { planCorrections, type CorrectionPlan } from './corrections'
 import { CorrectionsDialog } from './CorrectionsDialog'
 import { fitTextToBox } from './textMetrics'
 import { useFonts } from './fonts'
+import { ObjectList } from './ObjectListPanel'
+import { isVisible } from './objectList'
 import { CodeList, collectCodes, TagSection } from './TagPanel'
 import { TextPanel } from './TextPanel'
 import { store, useStore } from './store'
@@ -86,7 +88,7 @@ export function App() {
     return page.layers
       .filter((layer) => layer.visible && !layer.locked)
       .flatMap((layer) => layer.objects)
-      .filter((object) => ids.has(object.id))
+      .filter((object) => ids.has(object.id) && isVisible(object))
   }, [page, selection.ids])
   const selectedTexts = useMemo(() => selectedObjects.filter((object) => object.type === 'text'), [selectedObjects])
   const codeEntries = useMemo(() => (page ? collectCodes(page) : []), [page])
@@ -299,7 +301,7 @@ export function App() {
     store.select(
       (current.pages[0]?.layers ?? [])
         .filter((layer) => layer.visible && !layer.locked)
-        .flatMap((layer) => layer.objects.map((object) => object.id))
+        .flatMap((layer) => layer.objects.filter(isVisible).map((object) => object.id))
     )
   )
 
@@ -596,6 +598,11 @@ export function App() {
       )}
 
       <div className="body">
+        {page && (
+          <aside className="sidebar">
+            <ObjectList page={page} selection={selection} onReveal={(object) => canvasRef.current?.reveal(objectBounds(object))} />
+          </aside>
+        )}
         <main className="workspace">
           {page ? (
             <Canvas

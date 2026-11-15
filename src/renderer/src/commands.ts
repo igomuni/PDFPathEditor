@@ -314,3 +314,20 @@ export function applyCorrections(document: DocumentModel, plan: CorrectionPlan):
     return [...kept, ...additions.map((object, i) => ({ ...object, z: baseZ + i }))]
   })
 }
+
+/**
+ * オブジェクトの表示/非表示を切り替える。出力には影響しない(design.md §3-38)。
+ * 表示に戻すときは visible を消す(省略 = 表示)。
+ */
+export function setObjectsVisible(document: DocumentModel, ids: readonly string[], visible: boolean): Command | null {
+  const idSet = new Set(ids)
+  const changed = (object: DocObject): boolean => idSet.has(object.id) && (object.visible !== false) !== visible
+  return objectsCommand(visible ? 'オブジェクトを表示' : 'オブジェクトを非表示', document, (layer) => {
+    if (layer.locked || !layer.objects.some(changed)) return null
+    return layer.objects.map((object) => {
+      if (!changed(object)) return object
+      const { visible: _visible, ...rest } = object
+      return (visible ? rest : { ...rest, visible: false }) as DocObject
+    })
+  })
+}

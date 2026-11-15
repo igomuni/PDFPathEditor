@@ -495,3 +495,160 @@ button.primary {
   border-color: var(--accent);
   color: #fff;
 }
+
+.sidebar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  min-height: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+}
+
+.object-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.object-list h2 {
+  margin: 0;
+  padding: 10px 10px 4px;
+  font-size: 13px;
+}
+
+.object-list .filters {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 10px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.object-list .kinds,
+.object-list .bulk {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.object-list .bulk .hint {
+  flex: 1;
+}
+
+.chip {
+  flex: 1;
+  padding: 2px 6px;
+  opacity: 0.5;
+}
+
+.chip.active {
+  opacity: 1;
+  border-color: var(--accent);
+}
+
+.object-list .rows {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.object-list .row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 6px;
+  white-space: nowrap;
+}
+
+.object-list .layer-row {
+  background: #303030;
+  font-weight: 600;
+}
+
+.object-list .object-row {
+  padding-left: 16px;
+}
+
+.object-list .object-row:hover {
+  background: #424242;
+}
+
+.object-list .object-row.selected {
+  background: #2f4f73;
+}
+
+.object-list .object-row.hidden .content,
+.object-list .object-row.hidden .kind,
+.object-list .object-row.hidden .role {
+  opacity: 0.4;
+}
+
+.object-list .row button {
+  flex: none;
+  width: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  line-height: 1;
+}
+
+.object-list .row button.eye[aria-pressed='false'] {
+  color: var(--muted);
+}
+
+.object-list .content {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.object-list .kind {
+  flex: none;
+  width: 16px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  color: #1c1c1c;
+}
+
+.kind-path {
+  background: #8fb4e8;
+}
+
+.kind-text {
+  background: #e8c98f;
+}
+
+.kind-image {
+  background: #a5d6a7;
+}
+
+.object-list .badge {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #555;
+  font-size: 11px;
+  font-weight: normal;
+}
+
+.object-list .badge.code {
+  background: #6b4a12;
+}
+
+.object-list .role,
+.object-list .count {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: normal;
+}
