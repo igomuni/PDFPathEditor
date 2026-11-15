@@ -9,7 +9,9 @@
     "build": "pnpm typecheck && pnpm test && electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "test": "node --test \"src/**/*.test.ts\""
+    "test": "node --test \"src/**/*.test.ts\"",
+    "fonts": "node scripts/fetch-fonts.ts",
+    "ocr:build": "mkdir -p resources/bin && swiftc -O native/vision-ocr/main.swift -o resources/bin/vision-ocr"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -19,7 +21,9 @@
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.1.1",
-    "pdfjs-dist": "^6.5.438"
+    "@tesseract.js-data/jpn": "^1.0.0",
+    "pdfjs-dist": "^6.5.438",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

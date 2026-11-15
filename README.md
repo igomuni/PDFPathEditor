@@ -13,6 +13,8 @@ PDFを読み込み、Path / Text / Image を編集するElectronデスクトッ�
 
 ```sh
 pnpm install
+pnpm fonts      # 同梱フォント(Noto Sans JP / Noto Serif JP)を resources/fonts/ に取得
+pnpm ocr:build  # macOS のみ: Vision の OCR ヘルパーをビルド(Xcode のコマンドラインツールが必要)
 pnpm dev        # 開発起動(HMR)
 pnpm test       # 単体テスト
 pnpm build      # 型チェック + テスト + ビルド(out/)
@@ -36,9 +38,18 @@ pnpm start      # ビルド済みを起動
 - 差分表示(⇧⌘D): 背景を赤、Pathをシアンで重ねる。一致=黒 / 背景のみ=赤 / Pathのみ=シアン
 - すべての編集は Undo/Redo できる
 
+### 現状(PoC マイルストーン4)
+- 「文字を検出」(⌘T)で、背景ラスターを OCR にかけ、行ごとの Text オブジェクトを候補レイヤーに入れる。エンジンは macOS Vision と Tesseract(tesseract.js)を選べる
+- 候補のサイズ・位置・字間は、インクの範囲に Noto Sans JP で組んだ文字が重なるように推定する。文字内容は人が確定する前提
+- Text を選択すると右のパネルで文字列・フォント・太さ・サイズ・字間・配置・色を編集できる(Undo/Redo 対応)
+- 保存すると、使っているフォントをプロジェクトの `fonts/` にコピーする
+
 ### 構成
 - `src/main/` ファイルI/O、プロジェクト管理、PDFラスタライズと候補抽出(utility process)
 - `src/main/vectorize/` Vectorizer の実装(罫線検出)
+- `src/main/ocr/` OCR エンジンと後処理
+- `native/vision-ocr/` macOS Vision を呼ぶ Swift ヘルパー
+- `scripts/` フォント取得スクリプト
 - `src/preload/` renderer に公開するAPI
 - `src/renderer/` React + SVGキャンバス
 - `src/shared/` ドキュメントモデルとIPCの型

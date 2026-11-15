@@ -64,8 +64,27 @@ export interface PathObject extends ObjectBase {
   lineCap: 'butt' | 'round' | 'square'
 }
 
-// Text は後続マイルストーンで追加する
-export type DocObject = ImageObject | PathObject
+/**
+ * 実フォントのテキスト。ローカル座標の原点がベースライン上の基準点で、transform でページに置く。
+ * align が left なら原点は行の左端、center なら中央、right なら右端。
+ */
+export interface TextObject extends ObjectBase {
+  type: 'text'
+  text: string
+  /** フォントは family と weight で指す(src/shared/fonts.ts) */
+  fontFamily: string
+  fontWeight: number
+  /** pt */
+  fontSize: number
+  /** 字間。各文字の送りに足す量(pt) */
+  letterSpacing: number
+  fill: string
+  align: 'left' | 'center' | 'right'
+  /** 出力時に文字を輪郭Pathとして描く(見た目の再現用)。false なら実フォントのTextとして出力する */
+  outline: boolean
+}
+
+export type DocObject = ImageObject | PathObject | TextObject
 
 export interface Layer {
   id: string

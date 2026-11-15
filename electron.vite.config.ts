@@ -20,7 +20,9 @@ export default defineConfig({
           // PDFラスタライズ用 utility process のエントリ
           'rasterize-worker': resolve(__dirname, 'src/main/rasterize-worker.ts'),
           // Path候補抽出(Vectorizer)用 utility process のエントリ
-          'vectorize-worker': resolve(__dirname, 'src/main/vectorize-worker.ts')
+          'vectorize-worker': resolve(__dirname, 'src/main/vectorize-worker.ts'),
+          // OCR(Text候補抽出)用 utility process のエントリ
+          'ocr-worker': resolve(__dirname, 'src/main/ocr-worker.ts')
         }
       }
     }

@@ -1,6 +1,7 @@
 // PDF座標(pt、左下原点、y上向き)と SVG座標(pt、ページ左上原点、y下向き)の変換層。
 // モデルは常にPDF座標で持ち、表示のときだけここを通す。
 import type { DocObject, Matrix, PathNode, Rect } from '../../shared/model'
+import { textLocalBox } from './textMetrics'
 
 export interface Point {
   x: number
@@ -103,15 +104,19 @@ export function applyMatrix(m: Matrix, p: Point): Point {
 
 /** オブジェクトのページ上の外接矩形(PDF座標)。線幅の半分を含める */
 export function objectBounds(object: DocObject): Rect {
-  const corners: Point[] =
-    object.type === 'image'
-      ? [
-          { x: 0, y: 0 },
-          { x: 1, y: 0 },
-          { x: 0, y: 1 },
-          { x: 1, y: 1 }
-        ]
-      : object.nodes
+  let corners: Point[]
+  if (object.type === 'path') {
+    corners = object.nodes
+  } else {
+    // 画像は単位正方形、テキストは組んだときの外形
+    const [x0, y0, x1, y1] = object.type === 'image' ? [0, 0, 1, 1] : textLocalBox(object)
+    corners = [
+      { x: x0, y: y0 },
+      { x: x1, y: y0 },
+      { x: x0, y: y1 },
+      { x: x1, y: y1 }
+    ]
+  }
   const points = corners.map((p) => applyMatrix(object.transform, p))
   const pad = object.type === 'path' ? object.strokeWidth / 2 : 0
   return [

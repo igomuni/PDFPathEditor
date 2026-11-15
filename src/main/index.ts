@@ -2,12 +2,30 @@ import { basename, extname, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type MenuItemConstructorOptions } from 'electron'
 import { IPC, type DetectTarget, type ImportOptions, type MenuCommand, type OpenedProject } from '../shared/ipc'
 import type { DocumentModel } from '../shared/model'
-import { detectCandidates, importPdf, loadDocument, readAsset, saveDocument } from './project'
+import {
+  detectCandidates,
+  detectText,
+  importPdf,
+  listFonts,
+  listOcrEngines,
+  loadDocument,
+  readAsset,
+  readFont,
+  saveDocument,
+  type ResourcePaths
+} from './project'
+import type { OcrEngineId } from '../shared/ocr'
 import { DEFAULT_VECTORIZER_ID } from '../shared/vectorizer'
 
 let mainWindow: BrowserWindow | null = null
 // 開いているプロジェクト。renderer から任意パスを受け取らないよう main 側で保持する
 let currentProjectDir: string | null = null
+
+/** `pnpm fonts` / `pnpm ocr:build` の出力先(開発時はリポジトリ直下の resources/) */
+function resourcePaths(): ResourcePaths {
+  const root = join(app.getAppPath(), 'resources')
+  return { fontsDir: join(root, 'fonts'), visionBinary: join(root, 'bin', 'vision-ocr') }
+}
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -84,7 +102,10 @@ function buildMenu(): void {
     },
     {
       label: '抽出',
-      submenu: [item('罫線を検出', 'CmdOrCtrl+D', 'detect-lines')]
+      submenu: [
+        item('罫線を検出', 'CmdOrCtrl+D', 'detect-lines'),
+        item('文字を検出(OCR)', 'CmdOrCtrl+T', 'detect-text')
+      ]
     },
     {
       label: '表示',
@@ -151,7 +172,7 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC.saveDocument, (_event, document: DocumentModel) =>
-    saveDocument(requireProjectDir(), document)
+    saveDocument(requireProjectDir(), document, resourcePaths())
   )
 
   ipcMain.handle(IPC.readAsset, (_event, assetRel: string) => readAsset(requireProjectDir(), assetRel))
@@ -159,6 +180,13 @@ function registerIpc(): void {
   ipcMain.handle(IPC.detectCandidates, (_event, target: DetectTarget) =>
     detectCandidates(requireProjectDir(), target, DEFAULT_VECTORIZER_ID)
   )
+
+  ipcMain.handle(IPC.detectText, (_event, target: DetectTarget, engineId: OcrEngineId) =>
+    detectText(requireProjectDir(), target, engineId, resourcePaths())
+  )
+  ipcMain.handle(IPC.listOcrEngines, () => listOcrEngines(resourcePaths()))
+  ipcMain.handle(IPC.listFonts, () => listFonts(resourcePaths()))
+  ipcMain.handle(IPC.readFont, (_event, file: string) => readFont(resourcePaths(), file))
 }
 
 void app.whenReady().then(() => {

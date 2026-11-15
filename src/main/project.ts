@@ -1,18 +1,22 @@
 // プロジェクトフォルダ(design.md §5.1)の作成・読み書き
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { chmod, copyFile, mkdir, readdir, readFile, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises'
-import { basename, join, resolve, sep } from 'node:path'
+import { access, chmod, copyFile, mkdir, readdir, readFile, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { utilityProcess } from 'electron'
+import { BUNDLED_FONTS, DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT, type FontFace } from '../shared/fonts'
 import type {
   DetectTarget,
   ImportOptions,
+  OcrRequest,
   RasterizeRequest,
   RasterizeResult,
   VectorizeRequest,
   WorkerReply
 } from '../shared/ipc'
-import { DOCUMENT_VERSION, type DocumentModel, type Layer, type LayerKind, type PathObject } from '../shared/model'
+import { DOCUMENT_VERSION, type DocumentModel, type Layer, type LayerKind, type PathObject, type TextObject } from '../shared/model'
+import type { OcrEngineId, OcrEngineInfo, TextDraft } from '../shared/ocr'
 import type { PathDraft } from '../shared/vectorizer'
 
 const DOCUMENT_FILE = 'document.json'
@@ -176,7 +180,60 @@ export async function loadDocument(projectDir: string): Promise<DocumentModel> {
   return document
 }
 
-export async function saveDocument(projectDir: string, document: DocumentModel): Promise<void> {
+const exists = (path: string): Promise<boolean> =>
+  access(path).then(
+    () => true,
+    () => false
+  )
+
+/** `pnpm fonts` で取得したフォントと `pnpm ocr:build` で作ったヘルパーの置き場 */
+export interface ResourcePaths {
+  fontsDir: string
+  visionBinary: string
+}
+
+/** 取得済みで使えるフォントの一覧 */
+export async function listFonts(resources: ResourcePaths): Promise<FontFace[]> {
+  const fonts: FontFace[] = []
+  for (const { family, weight, file, generic } of BUNDLED_FONTS) {
+    if (await exists(join(resources.fontsDir, file))) fonts.push({ family, weight, file, generic })
+  }
+  return fonts
+}
+
+export async function readFont(resources: ResourcePaths, file: string): Promise<Uint8Array> {
+  if (!BUNDLED_FONTS.some((font) => font.file === file)) throw new Error(`未登録のフォントです: ${file}`)
+  return readFile(join(resources.fontsDir, file))
+}
+
+/** Text が使っているフォントを、埋め込み用にプロジェクトの fonts/ へコピーする */
+async function copyUsedFonts(projectDir: string, document: DocumentModel, resources: ResourcePaths): Promise<void> {
+  const used = new Set<string>()
+  for (const page of document.pages) {
+    for (const layer of page.layers) {
+      for (const object of layer.objects) {
+        if (object.type !== 'text') continue
+        const font = BUNDLED_FONTS.find((f) => f.family === object.fontFamily && f.weight === object.fontWeight)
+        if (font) used.add(font.file)
+      }
+    }
+  }
+  for (const file of used) {
+    const source = join(resources.fontsDir, file)
+    const target = join(projectDir, 'fonts', file)
+    if ((await exists(source)) && !(await exists(target))) {
+      await mkdir(dirname(target), { recursive: true })
+      await copyFile(source, target)
+    }
+  }
+}
+
+export async function saveDocument(
+  projectDir: string,
+  document: DocumentModel,
+  resources?: ResourcePaths
+): Promise<void> {
+  if (resources) await copyUsedFonts(projectDir, document, resources)
   const target = join(projectDir, DOCUMENT_FILE)
   const temp = `${target}.tmp`
   await writeFile(temp, JSON.stringify(document, null, 2) + '\n', 'utf8')
@@ -206,6 +263,50 @@ export async function detectCandidates(
     pixelWidth: target.pixelWidth,
     pixelHeight: target.pixelHeight,
     imageTransform: target.transform
+  })
+  return drafts.map((draft, index) => ({ id: `obj-${randomUUID()}`, ...draft, z: index }))
+}
+
+export async function listOcrEngines(resources: ResourcePaths): Promise<OcrEngineInfo[]> {
+  const visionReason =
+    process.platform !== 'darwin'
+      ? 'macOS でのみ使えます'
+      : (await exists(resources.visionBinary))
+        ? null
+        : '`pnpm ocr:build` でヘルパーをビルドしてください'
+  return [
+    { id: 'vision', label: 'macOS Vision', available: visionReason === null, reason: visionReason },
+    { id: 'tesseract', label: 'Tesseract', available: true, reason: null }
+  ]
+}
+
+/** 背景ラスターを OCR にかけて Text 候補を作る。安定IDはここで振る */
+export async function detectText(
+  projectDir: string,
+  target: DetectTarget,
+  engineId: OcrEngineId,
+  resources: ResourcePaths
+): Promise<TextObject[]> {
+  const engine = (await listOcrEngines(resources)).find((info) => info.id === engineId)
+  if (!engine) throw new Error(`未登録の OCR エンジンです: ${engineId}`)
+  if (!engine.available) throw new Error(`${engine.label} は使えません: ${engine.reason}`)
+  const font = BUNDLED_FONTS.find((f) => f.family === DEFAULT_FONT_FAMILY && f.weight === DEFAULT_FONT_WEIGHT)!
+  const fontFile = join(resources.fontsDir, font.file)
+  if (!(await exists(fontFile))) {
+    throw new Error(`フォント ${font.file} がありません。\`pnpm fonts\` で取得してください`)
+  }
+  const languageData = createRequire(__filename).resolve('@tesseract.js-data/jpn/package.json')
+  const drafts = await runWorker<OcrRequest, TextDraft[]>('ocr-worker.js', 'OCR', {
+    engineId,
+    pngPath: resolveAsset(projectDir, target.asset),
+    pixelWidth: target.pixelWidth,
+    pixelHeight: target.pixelHeight,
+    imageTransform: target.transform,
+    fontFile,
+    fontFamily: font.family,
+    fontWeight: font.weight,
+    visionBinary: resources.visionBinary,
+    tesseractLangPath: join(dirname(languageData), '4.0.0_best_int')
   })
   return drafts.map((draft, index) => ({ id: `obj-${randomUUID()}`, ...draft, z: index }))
 }

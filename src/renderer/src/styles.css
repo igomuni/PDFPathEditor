@@ -111,10 +111,86 @@ button:disabled {
   outline-offset: 1px;
 }
 
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
 .workspace {
   position: relative;
   flex: 1;
-  min-height: 0;
+  min-width: 0;
+}
+
+.panel {
+  flex: none;
+  width: 240px;
+  padding: 10px;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panel h2 {
+  margin: 0 0 2px;
+  font-size: 13px;
+}
+
+.panel label {
+  display: flex;
+  gap: 6px;
+}
+
+.panel label > span:first-child {
+  flex: none;
+  width: 52px;
+  color: var(--muted);
+}
+
+.panel label.stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.panel input[type='text'],
+.panel input[type='number'],
+.panel select {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.panel p {
+  margin: 0;
+}
+
+.unit {
+  color: var(--muted);
+}
+
+.warning {
+  color: #ffb454;
+}
+
+.notice {
+  padding: 6px 10px;
+  background: #5c4a1e;
+  user-select: text;
+}
+
+select,
+input[type='text'] {
+  font: inherit;
+  color: var(--text);
+  background: #4a4a4a;
+  border: 1px solid #5c5c5c;
+  border-radius: 4px;
+  padding: 3px 6px;
 }
 
 .canvas {

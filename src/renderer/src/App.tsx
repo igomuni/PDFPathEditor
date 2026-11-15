@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_IMPORT_DPI, DEFAULT_IMPORT_PAGE, type MenuCommand } from '../../shared/ipc'
 import { Canvas, type CanvasHandle, type CanvasStatus } from './Canvas'
-import { confirmCandidates, deleteObjects, lineAxis, setLayerObjects, setLayerOpacity, setLayerVisible } from './commands'
+import type { OcrEngineId, OcrEngineInfo } from '../../shared/ocr'
+import {
+  confirmCandidates,
+  deleteObjects,
+  lineAxis,
+  replaceObjectsOfType,
+  setLayerOpacity,
+  setLayerVisible
+} from './commands'
+import { useFonts } from './fonts'
+import { TextPanel } from './TextPanel'
 import { store, useStore } from './store'
 
 function errorMessage(err: unknown): string {
@@ -18,6 +28,17 @@ export function App() {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<CanvasStatus>({ zoomPercent: 100, cursorPdf: null })
+  const { fonts, loaded: fontsLoaded } = useFonts()
+  const [ocrEngines, setOcrEngines] = useState<OcrEngineInfo[]>([])
+  const [ocrEngineId, setOcrEngineId] = useState<OcrEngineId | null>(null)
+
+  useEffect(() => {
+    void window.api.listOcrEngines().then((engines) => {
+      setOcrEngines(engines)
+      // 使えるもののうち先頭(macOS では Vision)を既定にする
+      setOcrEngineId((engines.find((engine) => engine.available) ?? engines[0])?.id ?? null)
+    })
+  }, [])
 
   const dirty = document !== savedDocument
   const page = document?.pages[0] ?? null
@@ -34,6 +55,9 @@ export function App() {
     for (const layer of page.layers) {
       const object = layer.objects.find((candidate) => candidate.id === selection.ids[0])
       if (!object) continue
+      if (object.type === 'text') {
+        return `選択: ${layer.name} テキスト「${object.text}」 ${object.fontFamily} ${object.fontSize}pt`
+      }
       if (object.type !== 'path') return `選択: ${layer.name}`
       const [p, q] = [object.nodes[0], object.nodes.at(-1)!]
       const axis = lineAxis(object)
@@ -43,6 +67,16 @@ export function App() {
     }
     return null
   }, [page, selection])
+
+  const selectedTexts = useMemo(() => {
+    if (!page || selection.ids.length === 0) return []
+    const ids = new Set(selection.ids)
+    return page.layers
+      .filter((layer) => layer.visible && !layer.locked)
+      .flatMap((layer) => layer.objects)
+      .filter((object) => object.type === 'text')
+      .filter((object) => ids.has(object.id))
+  }, [page, selection.ids])
 
   const run = useCallback(async (label: string, task: () => Promise<void>) => {
     setBusy(label)
@@ -101,9 +135,29 @@ export function App() {
           pixelHeight: image.pixelHeight
         })
         const latest = store.getState().document
-        if (latest) store.execute(setLayerObjects(latest, target.id, paths, '罫線を検出'))
+        if (latest) store.execute(replaceObjectsOfType(latest, target.id, 'path', paths, '罫線を検出'))
       }),
     [run]
+  )
+
+  const detectText = useCallback(
+    () =>
+      run('文字を検出中…', async () => {
+        if (!ocrEngineId) return
+        const current = store.getState().document?.pages[0]
+        const image = current?.layers
+          .find((layer) => layer.kind === 'background')
+          ?.objects.find((object) => object.type === 'image')
+        const target = current?.layers.find((layer) => layer.kind === 'candidates')
+        if (!image || !target) return
+        const texts = await window.api.detectText(
+          { asset: image.asset, transform: image.transform, pixelWidth: image.pixelWidth, pixelHeight: image.pixelHeight },
+          ocrEngineId
+        )
+        const latest = store.getState().document
+        if (latest) store.execute(replaceObjectsOfType(latest, target.id, 'text', texts, '文字を検出'))
+      }),
+    [run, ocrEngineId]
   )
 
   const withDocument = (action: (current: NonNullable<typeof document>) => void) => (): void => {
@@ -131,6 +185,7 @@ export function App() {
       undo: () => store.undo(),
       redo: () => store.redo(),
       'detect-lines': () => void detectLines(),
+      'detect-text': () => void detectText(),
       'confirm-selection': confirmSelection,
       'confirm-all': confirmAll,
       'delete-selection': deleteSelection,
@@ -142,7 +197,7 @@ export function App() {
       'zoom-100': () => canvasRef.current?.zoom100()
     }
     return window.api.onMenuCommand((command) => handlers[command]())
-  }, [importPdf, openProject, save, detectLines])
+  }, [importPdf, openProject, save, detectLines, detectText])
 
   useEffect(() => {
     const name = projectDir ? projectDir.split(/[\\/]/).pop() : null
@@ -230,6 +285,28 @@ export function App() {
             <button onClick={() => void detectLines()} disabled={busy !== null} title="背景ラスターから罫線・枠の候補を抽出 (⌘D)">
               罫線を検出
             </button>
+            <button
+              onClick={() => void detectText()}
+              disabled={busy !== null || !ocrEngineId}
+              title="背景ラスターを OCR にかけてテキストの候補を抽出 (⌘T)"
+            >
+              文字を検出
+            </button>
+            <select
+              value={ocrEngineId ?? ''}
+              onChange={(e) => {
+                setOcrEngineId(e.target.value as OcrEngineId)
+                e.currentTarget.blur()
+              }}
+              title="OCR エンジン"
+            >
+              {ocrEngines.map((engine) => (
+                <option key={engine.id} value={engine.id} disabled={!engine.available} title={engine.reason ?? undefined}>
+                  {engine.label}
+                  {engine.available ? '' : '(使用不可)'}
+                </option>
+              ))}
+            </select>
             {candidates && (
               <label>
                 <input
@@ -298,6 +375,13 @@ export function App() {
         </div>
       )}
 
+      {fontsLoaded && fonts.length === 0 && (
+        <div className="notice">
+          フォントが取得されていません。<code>pnpm fonts</code> を実行してから再起動してください(テキストは代わりのフォントで表示されます)。
+        </div>
+      )}
+
+      <div className="body">
       <main className="workspace">
         {page ? (
           <Canvas
@@ -318,6 +402,8 @@ export function App() {
         )}
         {busy && <div className="busy">{busy}</div>}
       </main>
+      {selectedTexts.length > 0 && <TextPanel texts={selectedTexts} fonts={fonts} />}
+      </div>
 
       <footer className="statusbar">
         {document && page ? (

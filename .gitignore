@@ -7,3 +7,6 @@ out/
 # サンプルPDF等の大きな入力ファイルはコミットしない(取得元は samples/README.md)
 samples/*
 !samples/README.md
+# pnpm fonts / pnpm ocr:build で生成する(取得元は src/shared/fonts.ts)
+resources/fonts/
+resources/bin/

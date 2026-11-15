@@ -1,5 +1,14 @@
 // ドキュメントを変更する操作はすべてここのコマンドを通す(Undo/Redo のため)。
-import type { DocObject, DocumentModel, Layer, Matrix, Page, PathNode, PathObject } from '../../shared/model.ts'
+import type {
+  DocObject,
+  DocumentModel,
+  Layer,
+  Matrix,
+  Page,
+  PathNode,
+  PathObject,
+  TextObject
+} from '../../shared/model.ts'
 import type { Command } from './history.ts'
 
 function updateLayer(document: DocumentModel, layerId: string, patch: Partial<Layer>): DocumentModel {
@@ -88,9 +97,38 @@ function mapSelected(layer: Layer, ids: ReadonlySet<string>, fn: (object: DocObj
   return layer.objects.map((object) => (ids.has(object.id) ? fn(object) : object))
 }
 
-/** レイヤーの中身を丸ごと入れ替える(候補の再抽出など) */
-export function setLayerObjects(document: DocumentModel, layerId: string, objects: DocObject[], label: string): Command | null {
-  return objectsCommand(label, document, (layer) => (layer.id === layerId ? objects : null))
+/**
+ * レイヤーの中の、指定した種類のオブジェクトだけを入れ替える(候補の再抽出)。
+ * 罫線を検出し直しても文字の候補は残る、という動きにする。
+ */
+export function replaceObjectsOfType(
+  document: DocumentModel,
+  layerId: string,
+  type: DocObject['type'],
+  objects: DocObject[],
+  label: string
+): Command | null {
+  return objectsCommand(label, document, (layer) => {
+    if (layer.id !== layerId) return null
+    const kept = layer.objects.filter((object) => object.type !== type)
+    const baseZ = kept.reduce((max, object) => Math.max(max, object.z), -1) + 1
+    return [...kept, ...objects.map((object, i) => ({ ...object, z: baseZ + i }))]
+  })
+}
+
+export type TextPatch = Partial<
+  Pick<TextObject, 'text' | 'fontFamily' | 'fontWeight' | 'fontSize' | 'letterSpacing' | 'fill' | 'align' | 'outline'>
+>
+
+/** 選択した Text の属性を変える。同じ属性の連続した変更(入力中など)は1つの履歴にまとめる */
+export function updateTexts(document: DocumentModel, ids: readonly string[], patch: TextPatch): Command | null {
+  const idSet = new Set(ids)
+  return objectsCommand(
+    'テキストの変更',
+    document,
+    (layer) => mapSelected(layer, idSet, (object) => (object.type === 'text' ? { ...object, ...patch } : object)),
+    `text:${Object.keys(patch).sort().join(',')}:${ids.join(',')}`
+  )
 }
 
 // 計算誤差の端数を残さないよう 1/1000 pt に丸める
@@ -115,7 +153,8 @@ function shiftNode(node: PathNode, dx: number, dy: number): PathNode {
 }
 
 function translateObject(object: DocObject, dx: number, dy: number): DocObject {
-  if (object.type === 'image') {
+  // Path は頂点を動かす(変換行列は単位のまま保つ)。画像とテキストは変換行列の平行移動成分を動かす
+  if (object.type !== 'path') {
     const [a, b, c, d, e, f] = object.transform
     return { ...object, transform: [a, b, c, d, round(e + dx), round(f + dy)] }
   }

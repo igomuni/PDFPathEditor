@@ -2,7 +2,7 @@
 // 実線は「長いラン」の束、点線は「短いランが等間隔に並ぶ列」の束として検出する。
 // 座標はラスターの画素座標(左上原点、x右向き、y下向き)。画素 (x, y) は [x, x+1)×[y, y+1) を占める。
 
-import type { GrayRaster } from '../../shared/vectorizer'
+import type { GrayRaster } from '../../shared/vectorizer.ts'
 
 export interface LineDetectorOptions {
   /** これ未満の濃度値をインク(黒)とみなす */

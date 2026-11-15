@@ -1,4 +1,5 @@
 import type { DocumentModel, ImageObject, Matrix } from './model'
+import type { OcrEngineId } from './ocr'
 
 export const IPC = {
   importPdf: 'project:import-pdf',
@@ -6,6 +7,10 @@ export const IPC = {
   saveDocument: 'project:save-document',
   readAsset: 'project:read-asset',
   detectCandidates: 'project:detect-candidates',
+  detectText: 'project:detect-text',
+  listOcrEngines: 'ocr:list-engines',
+  listFonts: 'fonts:list',
+  readFont: 'fonts:read',
   menuCommand: 'menu:command'
 } as const
 
@@ -29,6 +34,7 @@ export type MenuCommand =
   | 'undo'
   | 'redo'
   | 'detect-lines'
+  | 'detect-text'
   | 'confirm-selection'
   | 'confirm-all'
   | 'delete-selection'
@@ -70,3 +76,17 @@ export interface VectorizeRequest {
 }
 
 export type WorkerReply<T> = { ok: true; result: T } | { ok: false; error: string }
+
+export interface OcrRequest {
+  engineId: OcrEngineId
+  pngPath: string
+  pixelWidth: number
+  pixelHeight: number
+  imageTransform: Matrix
+  /** 配置の推定に使うフォント */
+  fontFile: string
+  fontFamily: string
+  fontWeight: number
+  visionBinary: string
+  tesseractLangPath: string
+}

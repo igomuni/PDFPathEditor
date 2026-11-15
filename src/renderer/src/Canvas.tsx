@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { DocObject, ImageObject, Layer, Page, PathObject, Rect } from '../../shared/model'
+import type { DocObject, ImageObject, Layer, Page, PathObject, Rect, TextObject } from '../../shared/model'
 import { confirmCandidates, deleteObjects, moveNode, moveObjects } from './commands'
 import {
   applyMatrix,
@@ -20,6 +20,7 @@ import {
   type View
 } from './coords'
 import { store, type Selection } from './store'
+import { cssFontFamily, textLocalBox } from './textMetrics'
 
 export interface CanvasHandle {
   zoomIn(): void
@@ -133,6 +134,30 @@ function PathView({ object, color, scale }: { object: PathObject; color: string 
   )
 }
 
+function TextView({ object, color }: { object: TextObject; color: string | null }) {
+  return (
+    <g transform={matrixToSvg(object.transform)} data-object-id={object.id}>
+      {/* ローカル座標は y 上向きなので、文字が裏返らないよう上下を戻す */}
+      <text
+        transform="scale(1 -1)"
+        x={0}
+        y={0}
+        fontFamily={cssFontFamily(object.fontFamily)}
+        fontWeight={object.fontWeight}
+        fontSize={object.fontSize}
+        letterSpacing={object.letterSpacing}
+        textAnchor={object.align === 'left' ? 'start' : object.align === 'center' ? 'middle' : 'end'}
+        fill={color ?? object.fill}
+        // 字の線ではなく外形全体をクリックできるようにする
+        pointerEvents="bounding-box"
+        style={{ whiteSpace: 'pre' }}
+      >
+        {object.text}
+      </text>
+    </g>
+  )
+}
+
 function LayerView({ layer, scale, diffMode }: { layer: Layer; scale: number; diffMode: boolean }) {
   const pathColor = diffMode ? DIFF_PATH_COLOR : layer.kind === 'candidates' ? CANDIDATE_COLOR : null
   const isBackground = layer.kind === 'background'
@@ -148,6 +173,8 @@ function LayerView({ layer, scale, diffMode }: { layer: Layer; scale: number; di
         .map((object) =>
           object.type === 'path' ? (
             <PathView key={object.id} object={object} color={pathColor} scale={scale} />
+          ) : object.type === 'text' ? (
+            <TextView key={object.id} object={object} color={pathColor} />
           ) : (
             <ImageView key={object.id} object={object} scale={scale} />
           )
@@ -162,6 +189,16 @@ function SelectionOverlay({ objects, selection, scale }: { objects: DocObject[];
   return (
     <g>
       {objects.map((object) => {
+        if (object.type === 'text') {
+          // 外形の枠と、基準点(ベースライン上)の印
+          const [x0, y0, x1, y1] = textLocalBox(object)
+          return (
+            <g key={object.id} transform={matrixToSvg(object.transform)}>
+              <rect className="selection-outline" x={x0} y={y0} width={x1 - x0} height={y1 - y0} stroke={SELECTION_COLOR} />
+              <line className="selection-outline" x1={x0} y1={0} x2={x1} y2={0} stroke={SELECTION_COLOR} strokeDasharray="2 2" />
+            </g>
+          )
+        }
         if (object.type !== 'path') return null
         return (
           <g key={object.id}>
