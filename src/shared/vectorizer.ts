@@ -1,5 +1,5 @@
 // Path化(Vectorizer)の差し替え口。方式を変えるときは Vectorizer を実装して登録する。
-import type { Matrix, PathObject } from './model'
+import type { Matrix, PathObject } from './model.ts'
 
 export interface GrayRaster {
   width: number
@@ -25,3 +25,6 @@ export interface Vectorizer {
 }
 
 export const DEFAULT_VECTORIZER_ID = 'line-detector'
+
+/** 矢印の検出で作った Path の meta.source。罫線を検出し直すと入れ替える */
+export const ARROW_SOURCE = 'arrow-detect'
