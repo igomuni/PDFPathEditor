@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_IMPORT_DPI, DEFAULT_IMPORT_PAGE, type MenuCommand } from '../../shared/ipc'
 import { Canvas, type CanvasHandle, type CanvasStatus } from './Canvas'
-import { setLayerObjects, setLayerOpacity, setLayerVisible } from './commands'
+import { confirmCandidates, deleteObjects, lineAxis, setLayerObjects, setLayerOpacity, setLayerVisible } from './commands'
 import { store, useStore } from './store'
 
 function errorMessage(err: unknown): string {
@@ -11,7 +11,7 @@ function errorMessage(err: unknown): string {
 }
 
 export function App() {
-  const { document, projectDir, savedDocument, canUndo, canRedo } = useStore()
+  const { document, projectDir, savedDocument, canUndo, canRedo, selection, diffMode } = useStore()
   const canvasRef = useRef<CanvasHandle>(null)
   const [pageNumber, setPageNumber] = useState(DEFAULT_IMPORT_PAGE)
   const [dpi, setDpi] = useState(DEFAULT_IMPORT_DPI)
@@ -23,6 +23,26 @@ export function App() {
   const page = document?.pages[0] ?? null
   const background = page?.layers.find((layer) => layer.kind === 'background') ?? null
   const candidates = page?.layers.find((layer) => layer.kind === 'candidates') ?? null
+  const confirmed = page?.layers.find((layer) => layer.kind === 'confirmed') ?? null
+  const backgroundImage = background?.objects.find((object) => object.type === 'image') ?? null
+  // 微調整の単位は背景ラスターの1画素(pt)
+  const nudgeStep = backgroundImage ? Math.abs(backgroundImage.transform[0]) / backgroundImage.pixelWidth : 72 / DEFAULT_IMPORT_DPI
+
+  const selectionSummary = useMemo(() => {
+    if (!page || selection.ids.length === 0) return null
+    if (selection.ids.length > 1) return `選択 ${selection.ids.length} 件`
+    for (const layer of page.layers) {
+      const object = layer.objects.find((candidate) => candidate.id === selection.ids[0])
+      if (!object) continue
+      if (object.type !== 'path') return `選択: ${layer.name}`
+      const [p, q] = [object.nodes[0], object.nodes.at(-1)!]
+      const axis = lineAxis(object)
+      const kind = axis === 'h' ? '横線' : axis === 'v' ? '縦線' : 'Path'
+      const node = selection.node ? ` / 頂点 ${selection.node.index + 1}` : ''
+      return `選択: ${layer.name} ${kind} (${p.x}, ${p.y}) → (${q.x}, ${q.y}) 線幅 ${object.strokeWidth}pt${object.dash ? ' 点線' : ''}${node}`
+    }
+    return null
+  }, [page, selection])
 
   const run = useCallback(async (label: string, task: () => Promise<void>) => {
     setBusy(label)
@@ -80,9 +100,27 @@ export function App() {
           pixelWidth: image.pixelWidth,
           pixelHeight: image.pixelHeight
         })
-        store.execute(setLayerObjects(target, paths, '罫線を検出'))
+        const latest = store.getState().document
+        if (latest) store.execute(setLayerObjects(latest, target.id, paths, '罫線を検出'))
       }),
     [run]
+  )
+
+  const withDocument = (action: (current: NonNullable<typeof document>) => void) => (): void => {
+    const current = store.getState().document
+    if (current) action(current)
+  }
+  const confirmSelection = withDocument((current) =>
+    store.execute(confirmCandidates(current, store.getState().selection.ids))
+  )
+  const confirmAll = withDocument((current) => store.execute(confirmCandidates(current)))
+  const deleteSelection = withDocument((current) => store.execute(deleteObjects(current, store.getState().selection.ids)))
+  const selectAll = withDocument((current) =>
+    store.select(
+      (current.pages[0]?.layers ?? [])
+        .filter((layer) => layer.visible && !layer.locked)
+        .flatMap((layer) => layer.objects.map((object) => object.id))
+    )
   )
 
   useEffect(() => {
@@ -93,6 +131,11 @@ export function App() {
       undo: () => store.undo(),
       redo: () => store.redo(),
       'detect-lines': () => void detectLines(),
+      'confirm-selection': confirmSelection,
+      'confirm-all': confirmAll,
+      'delete-selection': deleteSelection,
+      'select-all': selectAll,
+      'toggle-diff': () => store.setDiffMode(!store.getState().diffMode),
       'zoom-in': () => canvasRef.current?.zoomIn(),
       'zoom-out': () => canvasRef.current?.zoomOut(),
       'zoom-fit': () => canvasRef.current?.zoomFit(),
@@ -158,7 +201,10 @@ export function App() {
               <input
                 type="checkbox"
                 checked={background.visible}
-                onChange={(e) => store.execute(setLayerVisible(background, e.target.checked))}
+                onChange={(e) => {
+                  store.execute(setLayerVisible(background, e.target.checked))
+                  e.currentTarget.blur()
+                }}
               />
               背景
             </label>
@@ -171,7 +217,11 @@ export function App() {
                 step={0.05}
                 value={background.opacity}
                 onChange={(e) => store.execute(setLayerOpacity(background, e.target.valueAsNumber))}
-                onPointerUp={() => store.sealHistory()}
+                onPointerUp={(e) => {
+                  store.sealHistory()
+                  // フォーカスが残ると矢印キーがスライダーに取られる
+                  e.currentTarget.blur()
+                }}
                 onKeyUp={() => store.sealHistory()}
                 onBlur={() => store.sealHistory()}
               />
@@ -185,11 +235,45 @@ export function App() {
                 <input
                   type="checkbox"
                   checked={candidates.visible}
-                  onChange={(e) => store.execute(setLayerVisible(candidates, e.target.checked))}
+                  onChange={(e) => {
+                    store.execute(setLayerVisible(candidates, e.target.checked))
+                    e.currentTarget.blur()
+                  }}
                 />
                 候補
               </label>
             )}
+            {confirmed && (
+              <label>
+                <input
+                  type="checkbox"
+                  checked={confirmed.visible}
+                  onChange={(e) => {
+                    store.execute(setLayerVisible(confirmed, e.target.checked))
+                    e.currentTarget.blur()
+                  }}
+                />
+                確定
+              </label>
+            )}
+            <label title="背景を赤、Pathをシアンで重ねる。一致=黒 / 背景のみ=赤 / Pathのみ=シアン (⇧⌘D)">
+              <input
+                type="checkbox"
+                checked={diffMode}
+                onChange={(e) => {
+                  store.setDiffMode(e.target.checked)
+                  e.currentTarget.blur()
+                }}
+              />
+              差分
+            </label>
+            <span className="separator" />
+            <button onClick={confirmSelection} disabled={selection.ids.length === 0} title="選択した候補を確定レイヤーへ移す (Enter)">
+              選択を確定
+            </button>
+            <button onClick={confirmAll} disabled={!candidates || candidates.objects.length === 0} title="候補を全件確定する (⇧⌘Enter)">
+              全件確定
+            </button>
             <span className="separator" />
             <button onClick={() => canvasRef.current?.zoomOut()} title="縮小 (-)">
               −
@@ -216,7 +300,14 @@ export function App() {
 
       <main className="workspace">
         {page ? (
-          <Canvas ref={canvasRef} page={page} onStatus={setStatus} />
+          <Canvas
+            ref={canvasRef}
+            page={page}
+            selection={selection}
+            diffMode={diffMode}
+            nudgeStep={nudgeStep}
+            onStatus={setStatus}
+          />
         ) : (
           <div className="empty">
             <p>PDFを取り込むか、既存のプロジェクトフォルダを開いてください。</p>
@@ -237,7 +328,12 @@ export function App() {
                 ? `x ${status.cursorPdf.x.toFixed(2)} pt, y ${status.cursorPdf.y.toFixed(2)} pt`
                 : 'x —, y —'}
             </span>
-            {candidates && <span>候補 {candidates.objects.length} 件</span>}
+            {candidates && confirmed && (
+              <span>
+                候補 {candidates.objects.length} 件 / 確定 {confirmed.objects.length} 件
+              </span>
+            )}
+            {selectionSummary && <span className="selection-summary">{selectionSummary}</span>}
             <span className="grow" />
             <span>
               {document.source.originalFileName} p.{page.sourcePageNumber}/{document.source.pageCount}

@@ -73,7 +73,13 @@ function buildMenu(): void {
       label: '編集',
       submenu: [
         item('元に戻す', 'CmdOrCtrl+Z', 'undo'),
-        item('やり直す', 'Shift+CmdOrCtrl+Z', 'redo')
+        item('やり直す', 'Shift+CmdOrCtrl+Z', 'redo'),
+        { type: 'separator' },
+        item('すべて選択', 'CmdOrCtrl+A', 'select-all'),
+        // Enter / Delete はキャンバス側のキー操作で処理する(入力欄のキーを奪わないため)
+        { label: '選択した候補を確定 (Enter)', click: () => sendMenuCommand('confirm-selection') },
+        item('候補を全件確定', 'Shift+CmdOrCtrl+Enter', 'confirm-all'),
+        { label: '選択を削除 (Delete)', click: () => sendMenuCommand('delete-selection') }
       ]
     },
     {
@@ -87,6 +93,8 @@ function buildMenu(): void {
         item('縮小', 'CmdOrCtrl+-', 'zoom-out'),
         item('ページ全体', 'CmdOrCtrl+0', 'zoom-fit'),
         item('100%', 'CmdOrCtrl+1', 'zoom-100'),
+        { type: 'separator' },
+        item('差分表示の切替', 'Shift+CmdOrCtrl+D', 'toggle-diff'),
         { type: 'separator' },
         { role: 'togglefullscreen' },
         { role: 'toggleDevTools' }

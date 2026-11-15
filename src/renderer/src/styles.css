@@ -42,7 +42,19 @@ body {
   background: var(--panel);
   flex: none;
   white-space: nowrap;
+}
+
+.toolbar {
+  flex-wrap: wrap;
+}
+
+.statusbar {
   overflow: hidden;
+}
+
+.selection-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .toolbar {
@@ -171,4 +183,26 @@ button:disabled {
   padding: 6px 10px;
   background: #6b2a2a;
   user-select: text;
+}
+
+.selection-outline {
+  fill: none;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.node-handle {
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  cursor: pointer;
+}
+
+.marquee {
+  fill: rgba(30, 123, 255, 0.12);
+  stroke: #1e7bff;
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }

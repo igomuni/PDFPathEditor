@@ -1,6 +1,6 @@
 // PDF座標(pt、左下原点、y上向き)と SVG座標(pt、ページ左上原点、y下向き)の変換層。
 // モデルは常にPDF座標で持ち、表示のときだけここを通す。
-import type { Matrix, PathNode, Rect } from '../../shared/model'
+import type { DocObject, Matrix, PathNode, Rect } from '../../shared/model'
 
 export interface Point {
   x: number
@@ -95,4 +95,33 @@ export function pathData(nodes: PathNode[], closed: boolean): string {
   for (let i = 1; i < nodes.length; i++) d += segment(nodes[i - 1], nodes[i])
   if (closed) d += `${segment(nodes.at(-1)!, nodes[0])}Z`
   return d
+}
+
+export function applyMatrix(m: Matrix, p: Point): Point {
+  return { x: m[0] * p.x + m[2] * p.y + m[4], y: m[1] * p.x + m[3] * p.y + m[5] }
+}
+
+/** オブジェクトのページ上の外接矩形(PDF座標)。線幅の半分を含める */
+export function objectBounds(object: DocObject): Rect {
+  const corners: Point[] =
+    object.type === 'image'
+      ? [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+          { x: 0, y: 1 },
+          { x: 1, y: 1 }
+        ]
+      : object.nodes
+  const points = corners.map((p) => applyMatrix(object.transform, p))
+  const pad = object.type === 'path' ? object.strokeWidth / 2 : 0
+  return [
+    Math.min(...points.map((p) => p.x)) - pad,
+    Math.min(...points.map((p) => p.y)) - pad,
+    Math.max(...points.map((p) => p.x)) + pad,
+    Math.max(...points.map((p) => p.y)) + pad
+  ]
+}
+
+export function rectsIntersect(a: Rect, b: Rect): boolean {
+  return a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3]
 }

@@ -1,20 +1,25 @@
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
-import type { DocObject, ImageObject, LayerKind, Page, PathObject } from '../../shared/model'
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { DocObject, ImageObject, Layer, Page, PathObject, Rect } from '../../shared/model'
+import { confirmCandidates, deleteObjects, moveNode, moveObjects } from './commands'
 import {
+  applyMatrix,
   centerPage,
   CSS_PX_PER_PT,
   fitPage,
   matrixToSvg,
+  objectBounds,
   pageSize,
   panBy,
   pathData,
   pdfToSvgMatrix,
+  rectsIntersect,
   svgToPdf,
   viewportToSvg,
   zoomAt,
   type Point,
   type View
 } from './coords'
+import { store, type Selection } from './store'
 
 export interface CanvasHandle {
   zoomIn(): void
@@ -32,6 +37,11 @@ export interface CanvasStatus {
 
 interface Props {
   page: Page
+  selection: Selection
+  /** 背景を赤、Path をシアンで乗算合成する(一致=黒、背景のみ=赤、Pathのみ=シアン) */
+  diffMode: boolean
+  /** 矢印キー1回の移動量(pt)。背景ラスターの1画素 */
+  nudgeStep: number
   onStatus(status: CanvasStatus): void
 }
 
@@ -39,6 +49,24 @@ const ZOOM_STEP = Math.SQRT2
 const WHEEL_ZOOM_SENSITIVITY = 0.01
 // ラスターの1画素がこの CSS px 以上になったら補間せず画素をそのまま見せる
 const PIXELATE_THRESHOLD = 3
+// 候補レイヤーは背景と見分けられるよう、モデルの色ではなく固定の色で描く(表示だけの上書き)
+const CANDIDATE_COLOR = '#e6007e'
+const DIFF_BACKGROUND_COLOR = '#ff0000'
+const DIFF_PATH_COLOR = '#00ffff'
+const SELECTION_COLOR = '#1e7bff'
+// 細い線でもクリックできるようにする当たり判定の最小幅(CSS px)
+const HIT_WIDTH_PX = 8
+const NODE_SIZE_PX = 8
+// これ未満のドラッグはクリックとみなす(CSS px)
+const CLICK_SLOP_PX = 3
+
+const ARROW_DIRECTIONS: Record<string, [number, number]> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  // PDF座標は y が上向き
+  ArrowUp: [0, 1],
+  ArrowDown: [0, -1]
+}
 
 /** assets の画像を読み込んで Blob URL にする */
 function useAssetUrl(asset: string): string | null {
@@ -58,33 +86,6 @@ function useAssetUrl(asset: string): string | null {
     }
   }, [asset])
   return url
-}
-
-// 候補レイヤーは背景と見分けられるよう、モデルの色ではなく固定の色で描く(表示だけの上書き)
-const CANDIDATE_COLOR = '#e6007e'
-
-function PathView({ object, layerKind }: { object: PathObject; layerKind: LayerKind }) {
-  const isCandidate = layerKind === 'candidates'
-  return (
-    <path
-      d={pathData(object.nodes, object.closed)}
-      transform={matrixToSvg(object.transform)}
-      fill={object.fill === null ? 'none' : isCandidate ? CANDIDATE_COLOR : object.fill}
-      stroke={object.stroke === null ? 'none' : isCandidate ? CANDIDATE_COLOR : object.stroke}
-      strokeWidth={object.strokeWidth}
-      strokeDasharray={object.dash?.join(' ')}
-      strokeLinecap={object.lineCap}
-      data-object-id={object.id}
-    />
-  )
-}
-
-function ObjectView({ object, scale, layerKind }: { object: DocObject; scale: number; layerKind: LayerKind }) {
-  return object.type === 'path' ? (
-    <PathView object={object} layerKind={layerKind} />
-  ) : (
-    <ImageView object={object} scale={scale} />
-  )
 }
 
 function ImageView({ object, scale }: { object: ImageObject; scale: number }) {
@@ -108,15 +109,117 @@ function ImageView({ object, scale }: { object: ImageObject; scale: number }) {
   )
 }
 
-export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({ page, onStatus }, ref) {
+function PathView({ object, color, scale }: { object: PathObject; color: string | null; scale: number }) {
+  const d = pathData(object.nodes, object.closed)
+  return (
+    <g transform={matrixToSvg(object.transform)} data-object-id={object.id}>
+      <path
+        d={d}
+        fill={object.fill === null ? 'none' : (color ?? object.fill)}
+        stroke={object.stroke === null ? 'none' : (color ?? object.stroke)}
+        strokeWidth={object.strokeWidth}
+        strokeDasharray={object.dash?.join(' ')}
+        strokeLinecap={object.lineCap}
+      />
+      {/* 当たり判定用の見えない太い線 */}
+      <path
+        d={d}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={Math.max(object.strokeWidth, HIT_WIDTH_PX / scale)}
+        pointerEvents="stroke"
+      />
+    </g>
+  )
+}
+
+function LayerView({ layer, scale, diffMode }: { layer: Layer; scale: number; diffMode: boolean }) {
+  const pathColor = diffMode ? DIFF_PATH_COLOR : layer.kind === 'candidates' ? CANDIDATE_COLOR : null
+  const isBackground = layer.kind === 'background'
+  return (
+    <g
+      opacity={diffMode ? 1 : layer.opacity}
+      pointerEvents={layer.locked ? 'none' : undefined}
+      style={diffMode && !isBackground ? { mixBlendMode: 'multiply' } : undefined}
+      data-layer-kind={layer.kind}
+    >
+      {[...layer.objects]
+        .sort((a, b) => a.z - b.z)
+        .map((object) =>
+          object.type === 'path' ? (
+            <PathView key={object.id} object={object} color={pathColor} scale={scale} />
+          ) : (
+            <ImageView key={object.id} object={object} scale={scale} />
+          )
+        )}
+    </g>
+  )
+}
+
+/** 選択中のオブジェクトの輪郭と頂点ハンドル。大きさは画面上で一定にする */
+function SelectionOverlay({ objects, selection, scale }: { objects: DocObject[]; selection: Selection; scale: number }) {
+  const half = NODE_SIZE_PX / scale / 2
+  return (
+    <g>
+      {objects.map((object) => {
+        if (object.type !== 'path') return null
+        return (
+          <g key={object.id}>
+            <path
+              className="selection-outline"
+              d={pathData(object.nodes, object.closed)}
+              transform={matrixToSvg(object.transform)}
+              stroke={SELECTION_COLOR}
+            />
+            {object.nodes.map((node, index) => {
+              const p = applyMatrix(object.transform, node)
+              const active = selection.node?.objectId === object.id && selection.node.index === index
+              return (
+                <rect
+                  key={index}
+                  className="node-handle"
+                  x={p.x - half}
+                  y={p.y - half}
+                  width={half * 2}
+                  height={half * 2}
+                  fill={active ? SELECTION_COLOR : '#ffffff'}
+                  stroke={SELECTION_COLOR}
+                  data-node-object-id={object.id}
+                  data-node-index={index}
+                />
+              )
+            })}
+          </g>
+        )
+      })}
+    </g>
+  )
+}
+
+export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
+  { page, selection, diffMode, nudgeStep, onStatus },
+  ref
+) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState<{ width: number; height: number } | null>(null)
   const [view, setView] = useState<View | null>(null)
   const [spaceHeld, setSpaceHeld] = useState(false)
   const [panning, setPanning] = useState(false)
   const [cursorPdf, setCursorPdf] = useState<Point | null>(null)
+  /** 範囲選択の矩形(ビューポート上のCSS px) */
+  const [marquee, setMarquee] = useState<{ from: Point; to: Point } | null>(null)
   const fittedPageId = useRef<string | null>(null)
   const drag = useRef<{ pointerId: number; lastX: number; lastY: number } | null>(null)
+
+  // 選択・編集できるのは、表示中でロックされていないレイヤーのオブジェクトだけ
+  const editableObjects = useMemo(
+    () => page.layers.filter((layer) => layer.visible && !layer.locked).flatMap((layer) => layer.objects),
+    [page.layers]
+  )
+  const selectedObjects = useMemo(() => {
+    const ids = new Set(selection.ids)
+    return editableObjects.filter((object) => ids.has(object.id))
+  }, [editableObjects, selection.ids])
 
   useLayoutEffect(() => {
     const el = containerRef.current
@@ -170,11 +273,52 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({ page, on
   useEffect(() => {
     const isEditable = (target: EventTarget | null): boolean =>
       target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))
+
+    /** 選択に対するキー操作。処理したら true */
+    const editKey = (e: KeyboardEvent): boolean => {
+      const document = store.getState().document
+      if (!document) return false
+      const direction = ARROW_DIRECTIONS[e.key]
+      if (direction && selection.ids.length > 0) {
+        // 矢印: ラスター1画素 / Shift: 10倍 / Alt: 1/10
+        const step = nudgeStep * (e.shiftKey ? 10 : 1) * (e.altKey ? 0.1 : 1)
+        const dx = direction[0] * step
+        const dy = direction[1] * step
+        store.execute(
+          selection.node
+            ? moveNode(document, selection.node.objectId, selection.node.index, dx, dy)
+            : moveObjects(document, selection.ids, dx, dy)
+        )
+        return true
+      }
+      if (e.altKey) return false
+      if (e.key === 'Enter' && selection.ids.length > 0) {
+        store.execute(confirmCandidates(document, selection.ids))
+        return true
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selection.ids.length > 0) {
+        store.execute(deleteObjects(document, selection.ids))
+        return true
+      }
+      if (e.key === 'Escape' && selection.ids.length > 0) {
+        // 頂点の選択 → オブジェクトの選択の順に解除する
+        store.select(selection.node ? selection.ids : [])
+        return true
+      }
+      return false
+    }
+
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (isEditable(e.target) || e.metaKey || e.ctrlKey || e.altKey) return
-      const mid = { x: (containerRef.current?.clientWidth ?? 0) / 2, y: (containerRef.current?.clientHeight ?? 0) / 2 }
+      if (isEditable(e.target) || e.metaKey || e.ctrlKey) return
+      if (editKey(e)) {
+        e.preventDefault()
+        return
+      }
+      if (e.altKey) return
       const el = containerRef.current
-      const viewport = el ? { width: el.clientWidth, height: el.clientHeight } : null
+      if (!el) return
+      const viewport = { width: el.clientWidth, height: el.clientHeight }
+      const mid = { x: viewport.width / 2, y: viewport.height / 2 }
       if (e.code === 'Space') {
         e.preventDefault()
         setSpaceHeld(true)
@@ -182,16 +326,21 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({ page, on
         setView((v) => v && zoomAt(v, mid, v.scale * ZOOM_STEP))
       } else if (e.key === '-') {
         setView((v) => v && zoomAt(v, mid, v.scale / ZOOM_STEP))
-      } else if (e.key === '1' && viewport) {
+      } else if (e.key === '1') {
         setView(centerPage(page.mediaBox, viewport, CSS_PX_PER_PT))
-      } else if (e.key === '5' && viewport) {
+      } else if (e.key === '5') {
         setView(fitPage(page.mediaBox, viewport))
       }
     }
     const onKeyUp = (e: KeyboardEvent): void => {
       if (e.code === 'Space') setSpaceHeld(false)
+      // 矢印キーを離したら、そこまでの移動を1つの履歴として区切る
+      if (ARROW_DIRECTIONS[e.key]) store.sealHistory()
     }
-    const onBlur = (): void => setSpaceHeld(false)
+    const onBlur = (): void => {
+      setSpaceHeld(false)
+      store.sealHistory()
+    }
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
     window.addEventListener('blur', onBlur)
@@ -200,7 +349,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({ page, on
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onBlur)
     }
-  }, [page.mediaBox])
+  }, [page.mediaBox, selection, nudgeStep])
 
   const zoomPercent = view ? (view.scale / CSS_PX_PER_PT) * 100 : 100
   useEffect(() => {
@@ -212,6 +361,8 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({ page, on
     return { x: e.clientX - rect.left, y: e.clientY - rect.top }
   }
 
+  const toPdf = (v: View, p: Point): Point => svgToPdf(page.mediaBox, viewportToSvg(v, p))
+
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     // 中ボタンドラッグ、または Space+左ドラッグでパン
     if (e.button === 1 || (e.button === 0 && spaceHeld)) {
@@ -219,7 +370,31 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({ page, on
       e.currentTarget.setPointerCapture(e.pointerId)
       drag.current = { pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY }
       setPanning(true)
+      return
     }
+    if (e.button !== 0) return
+    store.sealHistory()
+    const target = e.target as Element
+    const nodeEl = target.closest<SVGElement>('[data-node-index]')
+    if (nodeEl) {
+      const objectId = nodeEl.dataset.nodeObjectId!
+      store.select(selection.ids.includes(objectId) ? selection.ids : [objectId], {
+        objectId,
+        index: Number(nodeEl.dataset.nodeIndex)
+      })
+      return
+    }
+    const objectId = target.closest<SVGElement>('[data-object-id]')?.dataset.objectId
+    if (objectId && editableObjects.some((object) => object.id === objectId)) {
+      if (!e.shiftKey) store.select([objectId])
+      else if (selection.ids.includes(objectId)) store.select(selection.ids.filter((id) => id !== objectId))
+      else store.select([...selection.ids, objectId])
+      return
+    }
+    // 何もない場所: 範囲選択を始める(動かさずに離せば選択解除)
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const p = localPoint(e)
+    setMarquee({ from: p, to: p })
   }
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
@@ -231,18 +406,44 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({ page, on
       d.lastY = e.clientY
       setView((v) => v && panBy(v, -dx, -dy))
     }
-    if (view) setCursorPdf(svgToPdf(page.mediaBox, viewportToSvg(view, localPoint(e))))
+    const p = localPoint(e)
+    if (marquee) setMarquee({ from: marquee.from, to: p })
+    if (view) setCursorPdf(toPdf(view, p))
   }
 
-  const endDrag = (e: React.PointerEvent<HTMLDivElement>): void => {
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (drag.current?.pointerId === e.pointerId) {
       drag.current = null
       setPanning(false)
     }
+    if (marquee && view) {
+      const { from, to } = marquee
+      setMarquee(null)
+      const base = e.shiftKey ? selection.ids : []
+      if (Math.hypot(to.x - from.x, to.y - from.y) < CLICK_SLOP_PX) {
+        store.select(base)
+        return
+      }
+      const a = toPdf(view, from)
+      const b = toPdf(view, to)
+      const rect: Rect = [Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y)]
+      const hit = editableObjects.filter((object) => rectsIntersect(objectBounds(object), rect)).map((object) => object.id)
+      store.select([...new Set([...base, ...hit])])
+    }
+  }
+
+  const onPointerCancel = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (drag.current?.pointerId === e.pointerId) {
+      drag.current = null
+      setPanning(false)
+    }
+    setMarquee(null)
   }
 
   const { width: pageWidth, height: pageHeight } = pageSize(page.mediaBox)
   const cursor = panning ? 'grabbing' : spaceHeld ? 'grab' : 'default'
+  const background = page.layers.filter((layer) => layer.kind === 'background')
+  const foreground = page.layers.filter((layer) => layer.kind !== 'background')
 
   return (
     <div
@@ -251,8 +452,8 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({ page, on
       style={{ cursor }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
       onPointerLeave={() => setCursorPdf(null)}
     >
       {size && view && (
@@ -262,23 +463,46 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({ page, on
           viewBox={`${view.x} ${view.y} ${size.width / view.scale} ${size.height / view.scale}`}
         >
           <rect className="page-shadow" x={3 / view.scale} y={3 / view.scale} width={pageWidth} height={pageHeight} />
-          <rect className="page-paper" x={0} y={0} width={pageWidth} height={pageHeight} />
-          {/* ここから内側はPDF座標(pt、左下原点) */}
-          <g transform={matrixToSvg(pdfToSvgMatrix(page.mediaBox))}>
-            {page.layers.map(
-              (layer) =>
-                layer.visible && (
-                  <g key={layer.id} opacity={layer.opacity} data-layer-kind={layer.kind}>
-                    {[...layer.objects]
-                      .sort((a, b) => a.z - b.z)
-                      .map((object) => (
-                        <ObjectView key={object.id} object={object} scale={view.scale} layerKind={layer.kind} />
-                      ))}
-                  </g>
-                )
+          {/* isolate: 差分表示の合成をページの中だけに閉じる */}
+          <g style={{ isolation: 'isolate' }}>
+            <rect className="page-paper" x={0} y={0} width={pageWidth} height={pageHeight} />
+            {/* ここから内側はPDF座標(pt、左下原点) */}
+            <g transform={matrixToSvg(pdfToSvgMatrix(page.mediaBox))}>
+              {background.map(
+                (layer) => layer.visible && <LayerView key={layer.id} layer={layer} scale={view.scale} diffMode={diffMode} />
+              )}
+            </g>
+            {diffMode && (
+              // スクリーン合成で背景のインクを赤にする(白は白のまま)
+              <rect
+                x={0}
+                y={0}
+                width={pageWidth}
+                height={pageHeight}
+                fill={DIFF_BACKGROUND_COLOR}
+                pointerEvents="none"
+                style={{ mixBlendMode: 'screen' }}
+              />
             )}
+            <g transform={matrixToSvg(pdfToSvgMatrix(page.mediaBox))}>
+              {foreground.map(
+                (layer) => layer.visible && <LayerView key={layer.id} layer={layer} scale={view.scale} diffMode={diffMode} />
+              )}
+            </g>
           </g>
           <rect className="page-border" x={0} y={0} width={pageWidth} height={pageHeight} />
+          <g transform={matrixToSvg(pdfToSvgMatrix(page.mediaBox))}>
+            <SelectionOverlay objects={selectedObjects} selection={selection} scale={view.scale} />
+          </g>
+          {marquee && (
+            <rect
+              className="marquee"
+              x={view.x + Math.min(marquee.from.x, marquee.to.x) / view.scale}
+              y={view.y + Math.min(marquee.from.y, marquee.to.y) / view.scale}
+              width={Math.abs(marquee.to.x - marquee.from.x) / view.scale}
+              height={Math.abs(marquee.to.y - marquee.from.y) / view.scale}
+            />
+          )}
         </svg>
       )}
     </div>

@@ -1,7 +1,16 @@
 import { useSyncExternalStore } from 'react'
 import type { OpenedProject } from '../../shared/ipc'
 import type { DocumentModel } from '../../shared/model'
-import { History, type Command } from './history'
+import { History, type Command } from './history.ts'
+
+export interface Selection {
+  /** 選択中のオブジェクトID */
+  ids: readonly string[]
+  /** 選択中の頂点(1つまで)。なければ null */
+  node: { objectId: string; index: number } | null
+}
+
+const EMPTY_SELECTION: Selection = { ids: [], node: null }
 
 export interface StoreState {
   projectDir: string | null
@@ -10,6 +19,9 @@ export interface StoreState {
   savedDocument: DocumentModel | null
   canUndo: boolean
   canRedo: boolean
+  /** 選択と表示モードは画面の状態で、ドキュメントには保存しない(Undo の対象外) */
+  selection: Selection
+  diffMode: boolean
 }
 
 class DocumentStore {
@@ -18,7 +30,9 @@ class DocumentStore {
     document: null,
     savedDocument: null,
     canUndo: false,
-    canRedo: false
+    canRedo: false,
+    selection: EMPTY_SELECTION,
+    diffMode: false
   }
   private history = new History()
   private listeners = new Set<() => void>()
@@ -30,24 +44,53 @@ class DocumentStore {
 
   getState = (): StoreState => this.state
 
+  private emit(): void {
+    this.listeners.forEach((listener) => listener())
+  }
+
   private setDocument(document: DocumentModel): void {
+    // Undo などで消えたオブジェクトは選択から外す
+    const existing = new Set<string>()
+    for (const page of document.pages) {
+      for (const layer of page.layers) for (const object of layer.objects) existing.add(object.id)
+    }
+    const { selection } = this.state
+    const ids = selection.ids.filter((id) => existing.has(id))
+    const node = selection.node && existing.has(selection.node.objectId) ? selection.node : null
     this.state = {
       ...this.state,
+      selection: ids.length === selection.ids.length && node === selection.node ? selection : { ids, node },
       document,
       canUndo: this.history.canUndo,
       canRedo: this.history.canRedo
     }
-    this.listeners.forEach((listener) => listener())
+    this.emit()
   }
 
   open(project: OpenedProject): void {
     this.history = new History()
-    this.state = { ...this.state, projectDir: project.projectDir, savedDocument: project.document }
+    this.state = {
+      ...this.state,
+      projectDir: project.projectDir,
+      savedDocument: project.document,
+      selection: EMPTY_SELECTION
+    }
     this.setDocument(project.document)
   }
 
-  execute(command: Command): void {
-    if (this.state.document) this.setDocument(this.history.execute(this.state.document, command))
+  /** コマンドを実行して履歴に積む。null(変更なし)は無視する */
+  execute(command: Command | null): void {
+    if (command && this.state.document) this.setDocument(this.history.execute(this.state.document, command))
+  }
+
+  select(ids: readonly string[], node: Selection['node'] = null): void {
+    this.state = { ...this.state, selection: { ids, node } }
+    this.emit()
+  }
+
+  setDiffMode(diffMode: boolean): void {
+    this.state = { ...this.state, diffMode }
+    this.emit()
   }
 
   sealHistory(): void {
@@ -64,7 +107,7 @@ class DocumentStore {
 
   markSaved(document: DocumentModel): void {
     this.state = { ...this.state, savedDocument: document }
-    this.listeners.forEach((listener) => listener())
+    this.emit()
   }
 }
 

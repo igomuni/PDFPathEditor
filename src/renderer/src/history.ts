@@ -1,5 +1,5 @@
 // Undo/Redo(コマンドパターン)。ドキュメントは不変データとして扱い、コマンドは新しいドキュメントを返す。
-import type { DocumentModel } from '../../shared/model'
+import type { DocumentModel } from '../../shared/model.ts'
 
 export interface Command {
   label: string

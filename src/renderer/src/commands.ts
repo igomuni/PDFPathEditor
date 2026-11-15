@@ -1,5 +1,6 @@
-import type { DocObject, DocumentModel, Layer } from '../../shared/model'
-import type { Command } from './history'
+// ドキュメントを変更する操作はすべてここのコマンドを通す(Undo/Redo のため)。
+import type { DocObject, DocumentModel, Layer, Matrix, Page, PathNode, PathObject } from '../../shared/model.ts'
+import type { Command } from './history.ts'
 
 function updateLayer(document: DocumentModel, layerId: string, patch: Partial<Layer>): DocumentModel {
   return {
@@ -31,12 +32,176 @@ export function setLayerVisible(layer: Layer, visible: boolean): Command {
   }
 }
 
-/** レイヤーの中身を丸ごと入れ替える(候補の再抽出など) */
-export function setLayerObjects(layer: Layer, objects: DocObject[], label: string): Command {
-  const before = layer.objects
+interface LayerChange {
+  layerId: string
+  before: DocObject[]
+  after: DocObject[]
+}
+
+function applyChanges(document: DocumentModel, changes: LayerChange[], pick: 'before' | 'after'): DocumentModel {
+  const objectsByLayer = new Map(changes.map((change) => [change.layerId, change[pick]]))
+  return {
+    ...document,
+    pages: document.pages.map((page) =>
+      page.layers.some((layer) => objectsByLayer.has(layer.id))
+        ? {
+            ...page,
+            layers: page.layers.map((layer) => {
+              const objects = objectsByLayer.get(layer.id)
+              return objects ? { ...layer, objects } : layer
+            })
+          }
+        : page
+    )
+  }
+}
+
+/**
+ * レイヤーのオブジェクト配列を作り直すコマンドを作る。compute が null を返したレイヤーは変更しない。
+ * 何も変わらなければ null を返す。
+ */
+function objectsCommand(
+  label: string,
+  document: DocumentModel,
+  compute: (layer: Layer, page: Page) => DocObject[] | null,
+  mergeKey?: string
+): Command | null {
+  const changes: LayerChange[] = []
+  for (const page of document.pages) {
+    for (const layer of page.layers) {
+      const after = compute(layer, page)
+      if (after && after !== layer.objects) changes.push({ layerId: layer.id, before: layer.objects, after })
+    }
+  }
+  if (changes.length === 0) return null
   return {
     label,
-    apply: (document) => updateLayer(document, layer.id, { objects }),
-    revert: (document) => updateLayer(document, layer.id, { objects: before })
+    mergeKey,
+    apply: (target) => applyChanges(target, changes, 'after'),
+    revert: (target) => applyChanges(target, changes, 'before')
   }
+}
+
+/** ロックされていないレイヤーの、ids に含まれるオブジェクトだけを変換する */
+function mapSelected(layer: Layer, ids: ReadonlySet<string>, fn: (object: DocObject) => DocObject): DocObject[] | null {
+  if (layer.locked || !layer.objects.some((object) => ids.has(object.id))) return null
+  return layer.objects.map((object) => (ids.has(object.id) ? fn(object) : object))
+}
+
+/** レイヤーの中身を丸ごと入れ替える(候補の再抽出など) */
+export function setLayerObjects(document: DocumentModel, layerId: string, objects: DocObject[], label: string): Command | null {
+  return objectsCommand(label, document, (layer) => (layer.id === layerId ? objects : null))
+}
+
+// 計算誤差の端数を残さないよう 1/1000 pt に丸める
+const round = (value: number): number => Math.round(value * 1000) / 1000
+
+/** ページ上の移動量を、オブジェクトのローカル座標での移動量に直す */
+function toLocalDelta(transform: Matrix, dx: number, dy: number): [number, number] {
+  const [a, b, c, d] = transform
+  const det = a * d - b * c
+  if (det === 0) return [dx, dy]
+  return [(d * dx - c * dy) / det, (a * dy - b * dx) / det]
+}
+
+function shiftNode(node: PathNode, dx: number, dy: number): PathNode {
+  return {
+    ...node,
+    x: round(node.x + dx),
+    y: round(node.y + dy),
+    ...(node.in ? { in: [round(node.in[0] + dx), round(node.in[1] + dy)] as [number, number] } : {}),
+    ...(node.out ? { out: [round(node.out[0] + dx), round(node.out[1] + dy)] as [number, number] } : {})
+  }
+}
+
+function translateObject(object: DocObject, dx: number, dy: number): DocObject {
+  if (object.type === 'image') {
+    const [a, b, c, d, e, f] = object.transform
+    return { ...object, transform: [a, b, c, d, round(e + dx), round(f + dy)] }
+  }
+  const [lx, ly] = toLocalDelta(object.transform, dx, dy)
+  return { ...object, nodes: object.nodes.map((node) => shiftNode(node, lx, ly)) }
+}
+
+/** 選択したオブジェクトを (dx, dy) pt だけ平行移動する */
+export function moveObjects(document: DocumentModel, ids: readonly string[], dx: number, dy: number): Command | null {
+  const idSet = new Set(ids)
+  return objectsCommand(
+    'オブジェクトの移動',
+    document,
+    (layer) => mapSelected(layer, idSet, (object) => translateObject(object, dx, dy)),
+    `move:${ids.join(',')}`
+  )
+}
+
+/** 水平または垂直な2頂点の線か。'h' | 'v' を返し、それ以外は null */
+export function lineAxis(path: PathObject): 'h' | 'v' | null {
+  if (path.closed || path.nodes.length !== 2) return null
+  const [p, q] = path.nodes
+  if (p.in || p.out || q.in || q.out) return null
+  if (p.y === q.y) return 'h'
+  if (p.x === q.x) return 'v'
+  return null
+}
+
+function moveNodeOf(path: PathObject, index: number, dx: number, dy: number): PathObject {
+  const [lx, ly] = toLocalDelta(path.transform, dx, dy)
+  const axis = lineAxis(path)
+  if (!axis) {
+    return { ...path, nodes: path.nodes.map((node, i) => (i === index ? shiftNode(node, lx, ly) : node)) }
+  }
+  // 水平・垂直を保つ: 線に沿う成分は端点だけ、直交する成分は線全体を動かす
+  const along: [number, number] = axis === 'h' ? [lx, 0] : [0, ly]
+  const across: [number, number] = axis === 'h' ? [0, ly] : [lx, 0]
+  return {
+    ...path,
+    nodes: path.nodes.map((node, i) =>
+      shiftNode(node, across[0] + (i === index ? along[0] : 0), across[1] + (i === index ? along[1] : 0))
+    )
+  }
+}
+
+/** Path の頂点を (dx, dy) pt だけ動かす。水平・垂直の線はその向きを保つ */
+export function moveNode(
+  document: DocumentModel,
+  objectId: string,
+  index: number,
+  dx: number,
+  dy: number
+): Command | null {
+  return objectsCommand(
+    '頂点の移動',
+    document,
+    (layer) =>
+      mapSelected(layer, new Set([objectId]), (object) =>
+        object.type === 'path' && index >= 0 && index < object.nodes.length ? moveNodeOf(object, index, dx, dy) : object
+      ),
+    `move-node:${objectId}:${index}`
+  )
+}
+
+export function deleteObjects(document: DocumentModel, ids: readonly string[]): Command | null {
+  const idSet = new Set(ids)
+  return objectsCommand('オブジェクトの削除', document, (layer) =>
+    layer.locked || !layer.objects.some((object) => idSet.has(object.id))
+      ? null
+      : layer.objects.filter((object) => !idSet.has(object.id))
+  )
+}
+
+/** 候補を確定レイヤーへ移す。ids を省略すると候補を全件確定する */
+export function confirmCandidates(document: DocumentModel, ids?: readonly string[]): Command | null {
+  const idSet = ids ? new Set(ids) : null
+  const isTarget = (object: DocObject): boolean => !idSet || idSet.has(object.id)
+  return objectsCommand(idSet ? '選択した候補の確定' : '候補の全件確定', document, (layer, page) => {
+    const moved = page.layers
+      .filter((other) => other.kind === 'candidates')
+      .flatMap((other) => other.objects.filter(isTarget))
+    if (moved.length === 0) return null
+    if (layer.kind === 'candidates') return layer.objects.filter((object) => !isTarget(object))
+    if (layer.kind !== 'confirmed') return null
+    // 確定済みの手前に積む
+    const baseZ = layer.objects.reduce((max, object) => Math.max(max, object.z), -1) + 1
+    return [...layer.objects, ...moved.map((object, i) => ({ ...object, z: baseZ + i }))]
+  })
 }
