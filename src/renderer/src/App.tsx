@@ -4,7 +4,7 @@ import { diffPages, sourceOf, toManifest } from '../../shared/project'
 import { Canvas, type CanvasHandle, type CanvasStatus, type ContextMenuRequest } from './Canvas'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT } from '../../shared/fonts'
-import type { DocObject, ObjectRole, TextObject } from '../../shared/model'
+import type { DocObject, ObjectRole, Rect, TextObject } from '../../shared/model'
 import { CIRCLE_SOURCE, type OcrEngineId, type OcrEngineInfo } from '../../shared/ocr'
 import {
   addObjects,
@@ -31,7 +31,9 @@ import { useFonts } from './fonts'
 import { ObjectList } from './ObjectListPanel'
 import { PageTree } from './PageTreePanel'
 import { isVisible } from './objectList'
-import { CodeList, collectCodes, ROLE_LABELS, TagSection } from './TagPanel'
+import { CodeListPanel } from './CodeListPanel'
+import { collectCodes } from './codes'
+import { ROLE_LABELS, TagSection } from './TagPanel'
 import { TextPanel } from './TextPanel'
 import { store, useStore } from './store'
 
@@ -56,6 +58,8 @@ export function App() {
   const [recent, setRecent] = useState<RecentProject[]>([])
   const [pendingCorrections, setPendingCorrections] = useState<{ fileName: string; plan: CorrectionPlan } | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuRequest | null>(null)
+  /** 左パネルで開いている一覧 */
+  const [leftTab, setLeftTab] = useState<'pages' | 'objects' | 'codes'>('objects')
 
   useEffect(() => {
     void window.api.listOcrEngines().then((engines) => {
@@ -112,6 +116,16 @@ export function App() {
     () => new Set(selectedObjects.flatMap((object) => (object.fieldCode === null ? [] : [object.fieldCode]))),
     [selectedObjects]
   )
+
+  /** 指定したオブジェクト全体が見える位置へ、キャンバスの表示を動かす */
+  const revealObjects = (ids: readonly string[]): void => {
+    const idSet = new Set(ids)
+    const boxes = (store.currentPage()?.layers ?? []).flatMap((layer) => layer.objects.filter((object) => idSet.has(object.id)).map(objectBounds))
+    if (boxes.length === 0) return
+    canvasRef.current?.reveal(
+      boxes.reduce<Rect>((all, box) => [Math.min(all[0], box[0]), Math.min(all[1], box[1]), Math.max(all[2], box[2]), Math.max(all[3], box[3])], boxes[0])
+    )
+  }
 
   const run = useCallback(async (label: string, task: () => Promise<void>) => {
     setBusy(label)
@@ -841,17 +855,47 @@ export function App() {
       <div className="body">
         {page && (
           <aside className="sidebar">
-            {document && (
-              <PageTree
-                document={document}
-                savedDocument={savedDocument}
-                currentPageId={page.id}
-                busy={busy !== null}
-                onAddPages={(sourceId, pages) => void addPages(sourceId, pages)}
-                onDeletePage={(pageId, label) => void deletePage(pageId, label)}
-              />
-            )}
-            <ObjectList page={page} selection={selection} onReveal={(object) => canvasRef.current?.reveal(objectBounds(object))} />
+            <div className="tabs" role="tablist">
+              {(
+                [
+                  ['pages', `ページ ${document?.pages.length ?? 0}`],
+                  ['objects', 'オブジェクト'],
+                  ['codes', `項目コード ${codeEntries.length}`]
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  role="tab"
+                  aria-selected={leftTab === id}
+                  className={leftTab === id ? 'active' : undefined}
+                  onClick={(e) => {
+                    setLeftTab(id)
+                    e.currentTarget.blur()
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {/* 切り替えても絞り込みや折りたたみが消えないよう、隠すだけにする */}
+            <div className="tab-body" hidden={leftTab !== 'pages'}>
+              {document && (
+                <PageTree
+                  document={document}
+                  savedDocument={savedDocument}
+                  currentPageId={page.id}
+                  busy={busy !== null}
+                  onAddPages={(sourceId, pages) => void addPages(sourceId, pages)}
+                  onDeletePage={(pageId, label) => void deletePage(pageId, label)}
+                />
+              )}
+            </div>
+            <div className="tab-body" hidden={leftTab !== 'objects'}>
+              <ObjectList page={page} selection={selection} onReveal={(object) => canvasRef.current?.reveal(objectBounds(object))} />
+            </div>
+            <div className="tab-body" hidden={leftTab !== 'codes'}>
+              <CodeListPanel page={page} entries={codeEntries} activeCodes={activeCodes} untaggedMode={untaggedMode} onReveal={revealObjects} />
+            </div>
           </aside>
         )}
         <main className="workspace">
@@ -899,7 +943,11 @@ export function App() {
             {selectedTexts.length > 0 && (
               <TextPanel texts={selectedTexts} fonts={fonts} onEdit={editSelectedText} onMerge={mergeSelection} onSplitChars={splitSelectionChars} />
             )}
-            <CodeList entries={codeEntries} activeCodes={activeCodes} />
+            {selectedObjects.length === 0 && (
+              <p className="hint">
+                オブジェクトを選択すると、ここで項目コード・役割・文字の属性を編集できます。ダブルクリックで文字列の編集、右クリックでメニューが出ます。
+              </p>
+            )}
           </aside>
         )}
       </div>

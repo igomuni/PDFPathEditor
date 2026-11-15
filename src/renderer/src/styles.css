@@ -304,48 +304,6 @@ input[type='text'] {
   border-top: 1px solid var(--border);
 }
 
-.code-list {
-  min-height: 0;
-}
-
-.code-list ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 1px;
-}
-
-.code-list li button {
-  display: flex;
-  width: 100%;
-  gap: 8px;
-  padding: 2px 6px;
-  border: none;
-  border-radius: 3px;
-  background: transparent;
-  text-align: left;
-}
-
-.code-list li button.active {
-  background: #6b4a12;
-}
-
-.code-list .code {
-  width: 44px;
-  font-variant-numeric: tabular-nums;
-}
-
-.code-list .count {
-  flex: 1;
-  color: var(--muted);
-}
-
-.code-list .mark {
-  color: #ffb454;
-}
-
 .guide-outline {
   fill: none;
   stroke-width: 1;
@@ -813,10 +771,10 @@ button.primary {
   gap: 8px;
   white-space: nowrap;
   padding: 3px 6px;
-  border: 1px solid #c8ccd2;
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: #fff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  background: var(--panel);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   font-size: 12px;
 }
 
@@ -833,10 +791,10 @@ button.primary {
   z-index: 50;
   min-width: 190px;
   padding: 4px 0;
-  border: 1px solid #c8ccd2;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  background: var(--panel);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
   font-size: 12px;
 }
 
@@ -853,7 +811,7 @@ button.primary {
 .context-menu li.separator {
   height: 1px;
   margin: 4px 0;
-  background: #e2e5e9;
+  background: var(--border);
 }
 
 .context-menu button {
@@ -867,15 +825,15 @@ button.primary {
   background: none;
   text-align: left;
   font-size: 12px;
-  color: #1c1f23;
+  color: var(--text);
 }
 
 .context-menu button:disabled {
-  color: #a3a8af;
+  color: #777;
 }
 
 .context-menu li:hover > button:not(:disabled) {
-  background: #1e7bff;
+  background: var(--accent);
   color: #fff;
 }
 
@@ -899,12 +857,158 @@ button.primary {
   left: 100%;
   min-width: 150px;
   padding: 4px 0;
-  border: 1px solid #c8ccd2;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  background: var(--panel);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
 }
 
 .context-menu li.has-children:hover > .submenu {
   display: block;
+}
+
+/* 左パネルのタブ(ページ / オブジェクト / 項目コード) */
+.sidebar .tabs {
+  flex: none;
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar .tabs button {
+  flex: 1;
+  padding: 7px 4px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.sidebar .tabs button.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.sidebar .tab-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar .tab-body[hidden] {
+  display: none;
+}
+
+/* タブが見出しの代わりになる */
+.sidebar .tab-body h2 {
+  display: none;
+}
+
+.sidebar .page-tree {
+  flex: 1;
+  max-height: none;
+  min-height: 0;
+  border-bottom: none;
+  padding-top: 6px;
+}
+
+.sidebar .object-list .filters,
+.code-list .filters {
+  padding-top: 8px;
+}
+
+.code-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.code-list .filters {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.code-list .kinds,
+.code-list .bulk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.code-list .bulk .hint {
+  flex: 1;
+}
+
+.code-list .empty-note {
+  margin: 0;
+  padding: 10px;
+}
+
+.code-list ul {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.code-list .code-header,
+.code-list li button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+  padding: 2px 10px;
+}
+
+.code-list .code-header {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+
+.code-list li button {
+  height: 22px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.code-list li button:hover {
+  background: #424242;
+}
+
+.code-list li button.active {
+  background: #6b4a12;
+}
+
+.code-list .code {
+  flex: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.code-list .flag {
+  flex: none;
+  width: 40px;
+  text-align: center;
+}
+
+.code-list .flag.missing {
+  color: #ffb454;
+}
+
+.code-list .count {
+  flex: none;
+  width: 34px;
+  text-align: right;
+  color: var(--muted);
 }

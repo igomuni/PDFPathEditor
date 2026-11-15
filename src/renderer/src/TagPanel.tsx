@@ -1,5 +1,4 @@
-import { useMemo } from 'react'
-import type { DocObject, ObjectRole, Page } from '../../shared/model'
+import type { DocObject, ObjectRole } from '../../shared/model'
 import { updateObjects } from './commands'
 import type { ObjectPatch } from './fieldCodes'
 import { store } from './store'
@@ -66,70 +65,6 @@ export function TagSection({ objects, codes }: { objects: DocObject[]; codes: st
             ))}
         </select>
       </label>
-    </section>
-  )
-}
-
-export interface CodeEntry {
-  code: string
-  ids: string[]
-  /** 項目コードの印字(role=fieldCode)があるか */
-  printed: boolean
-  /** 記入欄(role=inputCell)があるか */
-  cell: boolean
-}
-
-/** 編集できるレイヤーのオブジェクトを項目コードごとにまとめる(コード順) */
-export function collectCodes(page: Page): CodeEntry[] {
-  const entries = new Map<string, CodeEntry>()
-  for (const layer of page.layers) {
-    if (layer.locked) continue
-    for (const object of layer.objects) {
-      if (object.fieldCode === null) continue
-      let entry = entries.get(object.fieldCode)
-      if (!entry) entries.set(object.fieldCode, (entry = { code: object.fieldCode, ids: [], printed: false, cell: false }))
-      entry.ids.push(object.id)
-      if (object.role === 'fieldCode') entry.printed = true
-      if (object.role === 'inputCell') entry.cell = true
-    }
-  }
-  return [...entries.values()].sort((a, b) => a.code.localeCompare(b.code, 'en', { numeric: true }))
-}
-
-/** 付与済みの項目コードの一覧。行を押すと、そのコードのオブジェクトをまとめて選択する */
-export function CodeList({ entries, activeCodes }: { entries: CodeEntry[]; activeCodes: ReadonlySet<string> }) {
-  const incomplete = useMemo(() => entries.filter((entry) => !entry.printed || !entry.cell).length, [entries])
-  return (
-    <section className="code-list">
-      <h2>項目コード一覧({entries.length})</h2>
-      {entries.length === 0 ? (
-        <p className="hint">
-          まだありません。罫線と文字を検出してから「項目コードを割り当て」を実行するか、オブジェクトを選んで上の欄に入力してください。
-        </p>
-      ) : (
-        <>
-          {incomplete > 0 && <p className="hint">▲ は印字か記入欄が見つかっていないコード({incomplete} 件)</p>}
-          <ul>
-            {entries.map((entry) => (
-              <li key={entry.code}>
-                <button
-                  className={activeCodes.has(entry.code) ? 'active' : undefined}
-                  onClick={(e) => {
-                    store.select(entry.ids)
-                    // フォーカスが残るとキャンバスのキー操作(矢印など)がボタンに取られる
-                    e.currentTarget.blur()
-                  }}
-                  title={`${entry.printed ? '印字あり' : '印字なし'} / ${entry.cell ? '記入欄あり' : '記入欄なし'}`}
-                >
-                  <span className="code">{entry.code}</span>
-                  <span className="count">{entry.ids.length} 件</span>
-                  <span className="mark">{entry.printed && entry.cell ? '' : '▲'}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
     </section>
   )
 }
