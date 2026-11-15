@@ -7,8 +7,10 @@ import type {
   Page,
   PathNode,
   PathObject,
+  Rect,
   TextObject
 } from '../../shared/model.ts'
+import { planFieldCodes, type FieldCodeSummary, type ObjectPatch } from './fieldCodes.ts'
 import type { Command } from './history.ts'
 
 function updateLayer(document: DocumentModel, layerId: string, patch: Partial<Layer>): DocumentModel {
@@ -243,4 +245,53 @@ export function confirmCandidates(document: DocumentModel, ids?: readonly string
     const baseZ = layer.objects.reduce((max, object) => Math.max(max, object.z), -1) + 1
     return [...layer.objects, ...moved.map((object, i) => ({ ...object, z: baseZ + i }))]
   })
+}
+
+/** 選択したオブジェクトの項目コードや役割を変える。入力中の連続した変更は1つの履歴にまとめる */
+export function updateObjects(document: DocumentModel, ids: readonly string[], patch: ObjectPatch): Command | null {
+  const idSet = new Set(ids)
+  const changed = (object: DocObject): boolean =>
+    (patch.fieldCode !== undefined && object.fieldCode !== patch.fieldCode) ||
+    (patch.role !== undefined && object.role !== patch.role)
+  return objectsCommand(
+    patch.role !== undefined ? '役割の変更' : '項目コードの変更',
+    document,
+    (layer) => {
+      if (layer.locked || !layer.objects.some((object) => idSet.has(object.id) && changed(object))) return null
+      return layer.objects.map((object) => (idSet.has(object.id) && changed(object) ? { ...object, ...patch } : object))
+    },
+    `object:${Object.keys(patch).sort().join(',')}:${ids.join(',')}`
+  )
+}
+
+/**
+ * 印字された項目コードを見つけて、コードの Text と右隣の記入欄に項目コードを割り当てる(fieldCodes.ts)。
+ * 変更がなければ command は null。
+ */
+export function assignFieldCodes(
+  document: DocumentModel,
+  boundsOf: (object: DocObject) => Rect,
+  newId?: () => string
+): { command: Command | null; summary: FieldCodeSummary } {
+  const plans = new Map(document.pages.map((page) => [page.id, planFieldCodes(page, boundsOf, newId)]))
+  const summary: FieldCodeSummary = { codes: 0, tagged: 0, cells: 0 }
+  for (const plan of plans.values()) {
+    summary.codes += plan.summary.codes
+    summary.tagged += plan.summary.tagged
+    summary.cells += plan.summary.cells
+  }
+  const command = objectsCommand('項目コードの割り当て', document, (layer, page) => {
+    const plan = plans.get(page.id)!
+    const added = plan.additions.get(layer.id) ?? []
+    if (added.length === 0 && !layer.objects.some((object) => plan.patches.has(object.id))) return null
+    const baseZ = layer.objects.reduce((max, object) => Math.max(max, object.z), -1) + 1
+    return [
+      ...layer.objects.map((object) => {
+        const patch = plan.patches.get(object.id)
+        return patch ? { ...object, ...patch } : object
+      }),
+      ...added.map((object, i) => ({ ...object, z: baseZ + i }))
+    ]
+  })
+  return { command, summary }
 }

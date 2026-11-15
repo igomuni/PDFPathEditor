@@ -104,7 +104,9 @@ function buildMenu(): void {
       label: '抽出',
       submenu: [
         item('罫線を検出', 'CmdOrCtrl+D', 'detect-lines'),
-        item('文字を検出(OCR)', 'CmdOrCtrl+T', 'detect-text')
+        item('文字を検出(OCR)', 'CmdOrCtrl+T', 'detect-text'),
+        { type: 'separator' },
+        item('項目コードを割り当て', 'CmdOrCtrl+G', 'assign-field-codes')
       ]
     },
     {
@@ -116,6 +118,7 @@ function buildMenu(): void {
         item('100%', 'CmdOrCtrl+1', 'zoom-100'),
         { type: 'separator' },
         item('差分表示の切替', 'Shift+CmdOrCtrl+D', 'toggle-diff'),
+        item('項目コード未付与の強調の切替', 'Shift+CmdOrCtrl+G', 'toggle-untagged'),
         { type: 'separator' },
         { role: 'togglefullscreen' },
         { role: 'toggleDevTools' }

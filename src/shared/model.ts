@@ -15,6 +15,8 @@ export type ObjectRole =
   | 'frame'
   | 'label'
   | 'inputCell'
+  /** 印字された項目コード(G01 等)そのもの */
+  | 'fieldCode'
   | 'qr'
   | 'formId'
   | 'other'

@@ -64,7 +64,7 @@ export function TextPanel({ texts, fonts }: Props) {
   )
 
   return (
-    <aside className="panel">
+    <section>
       <h2>テキスト{texts.length > 1 ? `(${texts.length} 件)` : ''}</h2>
       {texts.length === 1 && (
         <label className="stacked">
@@ -121,6 +121,6 @@ export function TextPanel({ texts, fonts }: Props) {
         <input type="checkbox" checked={outline ?? false} onChange={(e) => apply({ outline: e.target.checked })} />
       </label>
       {typeof confidence === 'number' && <p className="hint">OCR の確信度 {confidence.toFixed(2)}</p>}
-    </aside>
+    </section>
   )
 }

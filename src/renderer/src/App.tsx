@@ -3,6 +3,7 @@ import { DEFAULT_IMPORT_DPI, DEFAULT_IMPORT_PAGE, type MenuCommand } from '../..
 import { Canvas, type CanvasHandle, type CanvasStatus } from './Canvas'
 import type { OcrEngineId, OcrEngineInfo } from '../../shared/ocr'
 import {
+  assignFieldCodes,
   confirmCandidates,
   deleteObjects,
   lineAxis,
@@ -10,7 +11,9 @@ import {
   setLayerOpacity,
   setLayerVisible
 } from './commands'
+import { objectBounds } from './coords'
 import { useFonts } from './fonts'
+import { CodeList, collectCodes, TagSection } from './TagPanel'
 import { TextPanel } from './TextPanel'
 import { store, useStore } from './store'
 
@@ -21,12 +24,13 @@ function errorMessage(err: unknown): string {
 }
 
 export function App() {
-  const { document, projectDir, savedDocument, canUndo, canRedo, selection, diffMode } = useStore()
+  const { document, projectDir, savedDocument, canUndo, canRedo, selection, diffMode, untaggedMode } = useStore()
   const canvasRef = useRef<CanvasHandle>(null)
   const [pageNumber, setPageNumber] = useState(DEFAULT_IMPORT_PAGE)
   const [dpi, setDpi] = useState(DEFAULT_IMPORT_DPI)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [info, setInfo] = useState<string | null>(null)
   const [status, setStatus] = useState<CanvasStatus>({ zoomPercent: 100, cursorPdf: null })
   const { fonts, loaded: fontsLoaded } = useFonts()
   const [ocrEngines, setOcrEngines] = useState<OcrEngineInfo[]>([])
@@ -55,10 +59,12 @@ export function App() {
     for (const layer of page.layers) {
       const object = layer.objects.find((candidate) => candidate.id === selection.ids[0])
       if (!object) continue
+      const code = object.fieldCode ? ` [${object.fieldCode}]` : ''
       if (object.type === 'text') {
-        return `選択: ${layer.name} テキスト「${object.text}」 ${object.fontFamily} ${object.fontSize}pt`
+        return `選択: ${layer.name} テキスト「${object.text}」 ${object.fontFamily} ${object.fontSize}pt${code}`
       }
       if (object.type !== 'path') return `選択: ${layer.name}`
+      if (object.role === 'inputCell') return `選択: ${layer.name} 記入欄${code}`
       const [p, q] = [object.nodes[0], object.nodes.at(-1)!]
       const axis = lineAxis(object)
       const kind = axis === 'h' ? '横線' : axis === 'v' ? '縦線' : 'Path'
@@ -68,19 +74,27 @@ export function App() {
     return null
   }, [page, selection])
 
-  const selectedTexts = useMemo(() => {
+  const selectedObjects = useMemo(() => {
     if (!page || selection.ids.length === 0) return []
     const ids = new Set(selection.ids)
     return page.layers
       .filter((layer) => layer.visible && !layer.locked)
       .flatMap((layer) => layer.objects)
-      .filter((object) => object.type === 'text')
       .filter((object) => ids.has(object.id))
   }, [page, selection.ids])
+  const selectedTexts = useMemo(() => selectedObjects.filter((object) => object.type === 'text'), [selectedObjects])
+  const codeEntries = useMemo(() => (page ? collectCodes(page) : []), [page])
+  const codeNames = useMemo(() => codeEntries.map((entry) => entry.code), [codeEntries])
+  // 選択中のオブジェクトが持つ項目コード。同じコードのオブジェクトをキャンバスで強調する
+  const activeCodes = useMemo(
+    () => new Set(selectedObjects.flatMap((object) => (object.fieldCode === null ? [] : [object.fieldCode]))),
+    [selectedObjects]
+  )
 
   const run = useCallback(async (label: string, task: () => Promise<void>) => {
     setBusy(label)
     setError(null)
+    setInfo(null)
     try {
       await task()
     } catch (err) {
@@ -167,6 +181,19 @@ export function App() {
   const confirmSelection = withDocument((current) =>
     store.execute(confirmCandidates(current, store.getState().selection.ids))
   )
+  const assignCodes = withDocument((current) => {
+    // 文字の外形は画面のフォントで実測する
+    const { command, summary } = assignFieldCodes(current, objectBounds)
+    store.execute(command)
+    setError(null)
+    setInfo(
+      summary.codes === 0
+        ? '項目コードの印字が見つかりませんでした。先に「罫線を検出」と「文字を検出」を実行してください。'
+        : command
+          ? `印字された項目コード ${summary.codes} 件を見つけ、${summary.tagged} 件のオブジェクトに項目コードを付け、記入欄を ${summary.cells} 件作りました。`
+          : `印字された項目コード ${summary.codes} 件はすべて割り当て済みです。`
+    )
+  })
   const confirmAll = withDocument((current) => store.execute(confirmCandidates(current)))
   const deleteSelection = withDocument((current) => store.execute(deleteObjects(current, store.getState().selection.ids)))
   const selectAll = withDocument((current) =>
@@ -186,11 +213,13 @@ export function App() {
       redo: () => store.redo(),
       'detect-lines': () => void detectLines(),
       'detect-text': () => void detectText(),
+      'assign-field-codes': assignCodes,
       'confirm-selection': confirmSelection,
       'confirm-all': confirmAll,
       'delete-selection': deleteSelection,
       'select-all': selectAll,
       'toggle-diff': () => store.setDiffMode(!store.getState().diffMode),
+      'toggle-untagged': () => store.setUntaggedMode(!store.getState().untaggedMode),
       'zoom-in': () => canvasRef.current?.zoomIn(),
       'zoom-out': () => canvasRef.current?.zoomOut(),
       'zoom-fit': () => canvasRef.current?.zoomFit(),
@@ -307,6 +336,13 @@ export function App() {
                 </option>
               ))}
             </select>
+            <button
+              onClick={assignCodes}
+              disabled={busy !== null}
+              title="印字された項目コード(G01 等)を見つけ、コードと右隣の記入欄に割り当てる (⌘G)"
+            >
+              項目コードを割り当て
+            </button>
             {candidates && (
               <label>
                 <input
@@ -344,6 +380,17 @@ export function App() {
               />
               差分
             </label>
+            <label title="項目コードが付いていないテキストと記入欄を強調する (⇧⌘G)">
+              <input
+                type="checkbox"
+                checked={untaggedMode}
+                onChange={(e) => {
+                  store.setUntaggedMode(e.target.checked)
+                  e.currentTarget.blur()
+                }}
+              />
+              未付与
+            </label>
             <span className="separator" />
             <button onClick={confirmSelection} disabled={selection.ids.length === 0} title="選択した候補を確定レイヤーへ移す (Enter)">
               選択を確定
@@ -375,6 +422,13 @@ export function App() {
         </div>
       )}
 
+      {info && (
+        <div className="info" role="status">
+          {info}
+          <button onClick={() => setInfo(null)}>閉じる</button>
+        </div>
+      )}
+
       {fontsLoaded && fonts.length === 0 && (
         <div className="notice">
           フォントが取得されていません。<code>pnpm fonts</code> を実行してから再起動してください(テキストは代わりのフォントで表示されます)。
@@ -382,27 +436,35 @@ export function App() {
       )}
 
       <div className="body">
-      <main className="workspace">
-        {page ? (
-          <Canvas
-            ref={canvasRef}
-            page={page}
-            selection={selection}
-            diffMode={diffMode}
-            nudgeStep={nudgeStep}
-            onStatus={setStatus}
-          />
-        ) : (
-          <div className="empty">
-            <p>PDFを取り込むか、既存のプロジェクトフォルダを開いてください。</p>
-            <p className="hint">
-              既定では {DEFAULT_IMPORT_PAGE} ページ目を {DEFAULT_IMPORT_DPI}dpi で背景ラスターにします。元PDFは変更しません。
-            </p>
-          </div>
+        <main className="workspace">
+          {page ? (
+            <Canvas
+              ref={canvasRef}
+              page={page}
+              selection={selection}
+              diffMode={diffMode}
+              untaggedMode={untaggedMode}
+              activeCodes={activeCodes}
+              nudgeStep={nudgeStep}
+              onStatus={setStatus}
+            />
+          ) : (
+            <div className="empty">
+              <p>PDFを取り込むか、既存のプロジェクトフォルダを開いてください。</p>
+              <p className="hint">
+                既定では {DEFAULT_IMPORT_PAGE} ページ目を {DEFAULT_IMPORT_DPI}dpi で背景ラスターにします。元PDFは変更しません。
+              </p>
+            </div>
+          )}
+          {busy && <div className="busy">{busy}</div>}
+        </main>
+        {page && (
+          <aside className="panel">
+            {selectedObjects.length > 0 && <TagSection objects={selectedObjects} codes={codeNames} />}
+            {selectedTexts.length > 0 && <TextPanel texts={selectedTexts} fonts={fonts} />}
+            <CodeList entries={codeEntries} activeCodes={activeCodes} />
+          </aside>
         )}
-        {busy && <div className="busy">{busy}</div>}
-      </main>
-      {selectedTexts.length > 0 && <TextPanel texts={selectedTexts} fonts={fonts} />}
       </div>
 
       <footer className="statusbar">

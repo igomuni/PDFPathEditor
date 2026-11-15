@@ -282,3 +282,85 @@ input[type='text'] {
   vector-effect: non-scaling-stroke;
   pointer-events: none;
 }
+
+.info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  background: #1f4a3a;
+  user-select: text;
+}
+
+.panel section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panel section + section {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.code-list {
+  min-height: 0;
+}
+
+.code-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1px;
+}
+
+.code-list li button {
+  display: flex;
+  width: 100%;
+  gap: 8px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  text-align: left;
+}
+
+.code-list li button.active {
+  background: #6b4a12;
+}
+
+.code-list .code {
+  width: 44px;
+  font-variant-numeric: tabular-nums;
+}
+
+.code-list .count {
+  flex: 1;
+  color: var(--muted);
+}
+
+.code-list .mark {
+  color: #ffb454;
+}
+
+.guide-outline {
+  fill: none;
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.highlight-related {
+  fill: rgba(255, 153, 0, 0.3);
+  stroke: #ff9900;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.highlight-untagged {
+  fill: rgba(255, 60, 60, 0.22);
+}

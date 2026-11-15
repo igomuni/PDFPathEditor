@@ -22,6 +22,8 @@ export interface StoreState {
   /** 選択と表示モードは画面の状態で、ドキュメントには保存しない(Undo の対象外) */
   selection: Selection
   diffMode: boolean
+  /** 項目コードが付いていないテキスト・記入欄を強調する */
+  untaggedMode: boolean
 }
 
 class DocumentStore {
@@ -32,7 +34,8 @@ class DocumentStore {
     canUndo: false,
     canRedo: false,
     selection: EMPTY_SELECTION,
-    diffMode: false
+    diffMode: false,
+    untaggedMode: false
   }
   private history = new History()
   private listeners = new Set<() => void>()
@@ -90,6 +93,11 @@ class DocumentStore {
 
   setDiffMode(diffMode: boolean): void {
     this.state = { ...this.state, diffMode }
+    this.emit()
+  }
+
+  setUntaggedMode(untaggedMode: boolean): void {
+    this.state = { ...this.state, untaggedMode }
     this.emit()
   }
 

@@ -41,6 +41,10 @@ interface Props {
   selection: Selection
   /** 背景を赤、Path をシアンで乗算合成する(一致=黒、背景のみ=赤、Pathのみ=シアン) */
   diffMode: boolean
+  /** 項目コードが付いていないテキストと記入欄を強調する */
+  untaggedMode: boolean
+  /** 選択中のオブジェクトが持つ項目コード。同じコードのオブジェクトを強調する */
+  activeCodes: ReadonlySet<string>
   /** 矢印キー1回の移動量(pt)。背景ラスターの1画素 */
   nudgeStep: number
   onStatus(status: CanvasStatus): void
@@ -55,6 +59,8 @@ const CANDIDATE_COLOR = '#e6007e'
 const DIFF_BACKGROUND_COLOR = '#ff0000'
 const DIFF_PATH_COLOR = '#00ffff'
 const SELECTION_COLOR = '#1e7bff'
+// 線も塗りもないオブジェクト(記入欄の範囲)を画面で見せるための色
+const GUIDE_COLOR = '#0a9d58'
 // 細い線でもクリックできるようにする当たり判定の最小幅(CSS px)
 const HIT_WIDTH_PX = 8
 const NODE_SIZE_PX = 8
@@ -110,18 +116,34 @@ function ImageView({ object, scale }: { object: ImageObject; scale: number }) {
   )
 }
 
-function PathView({ object, color, scale }: { object: PathObject; color: string | null; scale: number }) {
+function PathView({
+  object,
+  color,
+  scale,
+  diffMode
+}: {
+  object: PathObject
+  color: string | null
+  scale: number
+  diffMode: boolean
+}) {
   const d = pathData(object.nodes, object.closed)
+  // 線も塗りもない Path(記入欄の範囲)は出力に描かれない。画面では細い破線で示し、差分表示では出さない
+  const invisible = object.fill === null && object.stroke === null
   return (
     <g transform={matrixToSvg(object.transform)} data-object-id={object.id}>
-      <path
-        d={d}
-        fill={object.fill === null ? 'none' : (color ?? object.fill)}
-        stroke={object.stroke === null ? 'none' : (color ?? object.stroke)}
-        strokeWidth={object.strokeWidth}
-        strokeDasharray={object.dash?.join(' ')}
-        strokeLinecap={object.lineCap}
-      />
+      {invisible ? (
+        !diffMode && <path className="guide-outline" d={d} stroke={GUIDE_COLOR} />
+      ) : (
+        <path
+          d={d}
+          fill={object.fill === null ? 'none' : (color ?? object.fill)}
+          stroke={object.stroke === null ? 'none' : (color ?? object.stroke)}
+          strokeWidth={object.strokeWidth}
+          strokeDasharray={object.dash?.join(' ')}
+          strokeLinecap={object.lineCap}
+        />
+      )}
       {/* 当たり判定用の見えない太い線 */}
       <path
         d={d}
@@ -172,13 +194,29 @@ function LayerView({ layer, scale, diffMode }: { layer: Layer; scale: number; di
         .sort((a, b) => a.z - b.z)
         .map((object) =>
           object.type === 'path' ? (
-            <PathView key={object.id} object={object} color={pathColor} scale={scale} />
+            <PathView key={object.id} object={object} color={pathColor} scale={scale} diffMode={diffMode} />
           ) : object.type === 'text' ? (
             <TextView key={object.id} object={object} color={pathColor} />
           ) : (
             <ImageView key={object.id} object={object} scale={scale} />
           )
         )}
+    </g>
+  )
+}
+
+/** オブジェクトの外形を半透明の矩形で塗って強調する(同じ項目コード、未付与) */
+function HighlightOverlay({ objects, className, scale }: { objects: DocObject[]; className: string; scale: number }) {
+  // 細い線でも見えるよう、画面上で少し広げる
+  const pad = 2 / scale
+  return (
+    <g pointerEvents="none">
+      {objects.map((object) => {
+        const [x0, y0, x1, y1] = objectBounds(object)
+        return (
+          <rect key={object.id} className={className} x={x0 - pad} y={y0 - pad} width={x1 - x0 + pad * 2} height={y1 - y0 + pad * 2} />
+        )
+      })}
     </g>
   )
 }
@@ -234,7 +272,7 @@ function SelectionOverlay({ objects, selection, scale }: { objects: DocObject[];
 }
 
 export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
-  { page, selection, diffMode, nudgeStep, onStatus },
+  { page, selection, diffMode, untaggedMode, activeCodes, nudgeStep, onStatus },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -257,6 +295,25 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     const ids = new Set(selection.ids)
     return editableObjects.filter((object) => ids.has(object.id))
   }, [editableObjects, selection.ids])
+
+  // 選択と同じ項目コードを持つ、選択していないオブジェクト
+  const relatedObjects = useMemo(() => {
+    if (activeCodes.size === 0) return []
+    const ids = new Set(selection.ids)
+    return editableObjects.filter(
+      (object) => object.fieldCode !== null && activeCodes.has(object.fieldCode) && !ids.has(object.id)
+    )
+  }, [editableObjects, activeCodes, selection.ids])
+  // 罫線は隣の項目と共有するので、未付与の強調はテキストと記入欄だけにする
+  const untaggedObjects = useMemo(
+    () =>
+      untaggedMode
+        ? editableObjects.filter(
+            (object) => object.fieldCode === null && (object.type === 'text' || object.role === 'inputCell')
+          )
+        : [],
+    [editableObjects, untaggedMode]
+  )
 
   useLayoutEffect(() => {
     const el = containerRef.current
@@ -529,6 +586,8 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
           </g>
           <rect className="page-border" x={0} y={0} width={pageWidth} height={pageHeight} />
           <g transform={matrixToSvg(pdfToSvgMatrix(page.mediaBox))}>
+            <HighlightOverlay objects={untaggedObjects} className="highlight-untagged" scale={view.scale} />
+            <HighlightOverlay objects={relatedObjects} className="highlight-related" scale={view.scale} />
             <SelectionOverlay objects={selectedObjects} selection={selection} scale={view.scale} />
           </g>
           {marquee && (
