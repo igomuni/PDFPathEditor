@@ -22,7 +22,9 @@ export default defineConfig({
           // Path候補抽出(Vectorizer)用 utility process のエントリ
           'vectorize-worker': resolve(__dirname, 'src/main/vectorize-worker.ts'),
           // OCR(Text候補抽出)用 utility process のエントリ
-          'ocr-worker': resolve(__dirname, 'src/main/ocr-worker.ts')
+          'ocr-worker': resolve(__dirname, 'src/main/ocr-worker.ts'),
+          // 出力(PDF / SVG / JSON)と差分検証用 utility process のエントリ
+          'export-worker': resolve(__dirname, 'src/main/export-worker.ts')
         }
       }
     }

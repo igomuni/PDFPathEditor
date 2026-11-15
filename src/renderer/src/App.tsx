@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { DEFAULT_IMPORT_DPI, DEFAULT_IMPORT_PAGE, type MenuCommand } from '../../shared/ipc'
+import { DEFAULT_IMPORT_DPI, DEFAULT_IMPORT_PAGE, type MenuCommand, type RecentProject } from '../../shared/ipc'
 import { Canvas, type CanvasHandle, type CanvasStatus } from './Canvas'
 import type { OcrEngineId, OcrEngineInfo } from '../../shared/ocr'
 import {
@@ -35,6 +35,7 @@ export function App() {
   const { fonts, loaded: fontsLoaded } = useFonts()
   const [ocrEngines, setOcrEngines] = useState<OcrEngineInfo[]>([])
   const [ocrEngineId, setOcrEngineId] = useState<OcrEngineId | null>(null)
+  const [recent, setRecent] = useState<RecentProject[]>([])
 
   useEffect(() => {
     void window.api.listOcrEngines().then((engines) => {
@@ -122,6 +123,24 @@ export function App() {
     [run]
   )
 
+  const openRecent = useCallback(
+    (dir: string) =>
+      run('プロジェクトを開いています…', async () => {
+        store.open(await window.api.openRecentProject(dir))
+      }),
+    [run]
+  )
+
+  useEffect(() => {
+    void window.api.listRecentProjects().then(setRecent)
+    const offChanged = window.api.onRecentProjectsChanged(setRecent)
+    const offPicked = window.api.onRecentProjectPicked((dir) => void openRecent(dir))
+    return () => {
+      offChanged()
+      offPicked()
+    }
+  }, [openRecent])
+
   const save = useCallback(
     () =>
       run('保存中…', async () => {
@@ -129,6 +148,25 @@ export function App() {
         if (!current) return
         await window.api.saveDocument(current)
         store.markSaved(current)
+      }),
+    [run]
+  )
+
+  const exportAll = useCallback(
+    () =>
+      run('出力して検証中…', async () => {
+        const current = store.getState().document
+        if (!current) return
+        const result = await window.api.exportDocument(current)
+        const percent = (value: number): string => `${(value * 100).toFixed(2)}%`
+        const summary = result.pages
+          .map((page) =>
+            page.metrics
+              ? `p.${page.pageNumber}: ${page.objectCount} 件 / 再現率 ${percent(page.metrics.recall)} / 過剰率 ${percent(page.metrics.excess)} / 不一致画素率 ${percent(page.metrics.mismatch)}`
+              : `p.${page.pageNumber}: ${page.objectCount} 件(背景なし、検証なし)`
+          )
+          .join(' / ')
+        setInfo(`${result.dir} に出力しました(${result.files.join(', ')})。${summary}`)
       }),
     [run]
   )
@@ -209,6 +247,7 @@ export function App() {
       'import-pdf': () => void importPdf(),
       'open-project': () => void openProject(),
       save: () => void save(),
+      export: () => void exportAll(),
       undo: () => store.undo(),
       redo: () => store.redo(),
       'detect-lines': () => void detectLines(),
@@ -226,7 +265,7 @@ export function App() {
       'zoom-100': () => canvasRef.current?.zoom100()
     }
     return window.api.onMenuCommand((command) => handlers[command]())
-  }, [importPdf, openProject, save, detectLines, detectText])
+  }, [importPdf, openProject, save, exportAll, detectLines, detectText])
 
   useEffect(() => {
     const name = projectDir ? projectDir.split(/[\\/]/).pop() : null
@@ -261,6 +300,26 @@ export function App() {
       <button onClick={() => void openProject()} disabled={busy !== null}>
         プロジェクトを開く…
       </button>
+      {recent.length > 0 && (
+        <select
+          className="recent-select"
+          value=""
+          disabled={busy !== null}
+          title="最近使ったプロジェクトを開く"
+          onChange={(e) => {
+            const dir = e.target.value
+            e.currentTarget.blur()
+            if (dir) void openRecent(dir)
+          }}
+        >
+          <option value="">最近使ったプロジェクト</option>
+          {recent.map((entry) => (
+            <option key={entry.dir} value={entry.dir} title={entry.dir}>
+              {entry.dir.split(/[\\/]/).pop()}
+            </option>
+          ))}
+        </select>
+      )}
     </>
   )
 
@@ -279,6 +338,13 @@ export function App() {
             </button>
             <button onClick={() => void save()} disabled={!dirty || busy !== null}>
               保存
+            </button>
+            <button
+              onClick={() => void exportAll()}
+              disabled={busy !== null || !confirmed || confirmed.objects.length === 0}
+              title="確定オブジェクトを PDF / SVG / JSON に出力し、背景との差分を検証する (⌘E)"
+            >
+              出力
             </button>
             <span className="separator" />
             <label>
@@ -454,6 +520,22 @@ export function App() {
               <p className="hint">
                 既定では {DEFAULT_IMPORT_PAGE} ページ目を {DEFAULT_IMPORT_DPI}dpi で背景ラスターにします。元PDFは変更しません。
               </p>
+              {recent.length > 0 && (
+                <div className="recent-list">
+                  <h2>最近使ったプロジェクト</h2>
+                  <ul>
+                    {recent.map((entry) => (
+                      <li key={entry.dir}>
+                        <button onClick={() => void openRecent(entry.dir)} disabled={busy !== null} title={entry.dir}>
+                          <span className="name">{entry.dir.split(/[\\/]/).pop()}</span>
+                          <span className="path">{entry.dir}</span>
+                          <span className="date">{new Date(entry.openedAt).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
           {busy && <div className="busy">{busy}</div>}

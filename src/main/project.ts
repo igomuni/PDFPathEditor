@@ -6,8 +6,10 @@ import { createRequire } from 'node:module'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { utilityProcess } from 'electron'
 import { BUNDLED_FONTS, DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT, type FontFace } from '../shared/fonts'
+import type { ExportResult } from '../shared/export'
 import type {
   DetectTarget,
+  ExportRequest,
   ImportOptions,
   OcrRequest,
   RasterizeRequest,
@@ -309,4 +311,20 @@ export async function detectText(
     tesseractLangPath: join(dirname(languageData), '4.0.0_best_int')
   })
   return drafts.map((draft, index) => ({ id: `obj-${randomUUID()}`, ...draft, z: index }))
+}
+
+/**
+ * 確定オブジェクトを exports/ に PDF / SVG / JSON として出力し、背景との差分を検証する。
+ * 画面上のドキュメント(未保存の変更を含む)をそのまま出力する。
+ */
+export async function exportDocument(
+  projectDir: string,
+  document: DocumentModel,
+  resources: ResourcePaths
+): Promise<ExportResult> {
+  return runWorker<ExportRequest, ExportResult>('export-worker.js', 'Export', {
+    projectDir,
+    document,
+    fontDirs: [join(projectDir, 'fonts'), resources.fontsDir]
+  })
 }

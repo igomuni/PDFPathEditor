@@ -8,6 +8,18 @@ export interface LoadedRaster {
   raster: GrayRaster
 }
 
+/** canvas の内容を濃淡ラスターにする */
+export function canvasToGray(canvas: Canvas): GrayRaster {
+  const { width, height } = canvas
+  const rgba = canvas.getContext('2d').getImageData(0, 0, width, height).data
+  const data = new Uint8Array(width * height)
+  for (let i = 0, p = 0; i < data.length; i++, p += 4) {
+    // ITU-R BT.601 の輝度
+    data[i] = Math.round(0.299 * rgba[p] + 0.587 * rgba[p + 1] + 0.114 * rgba[p + 2])
+  }
+  return { width, height, data }
+}
+
 export async function loadRaster(pngPath: string, expected: { pixelWidth: number; pixelHeight: number }): Promise<LoadedRaster> {
   const image = await loadImage(pngPath)
   const { width, height } = image
@@ -21,13 +33,7 @@ export async function loadRaster(pngPath: string, expected: { pixelWidth: number
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, width, height)
   ctx.drawImage(image, 0, 0)
-  const rgba = ctx.getImageData(0, 0, width, height).data
-  const data = new Uint8Array(width * height)
-  for (let i = 0, p = 0; i < data.length; i++, p += 4) {
-    // ITU-R BT.601 の輝度
-    data[i] = Math.round(0.299 * rgba[p] + 0.587 * rgba[p + 1] + 0.114 * rgba[p + 2])
-  }
-  return { canvas, raster: { width, height, data } }
+  return { canvas, raster: canvasToGray(canvas) }
 }
 
 /**

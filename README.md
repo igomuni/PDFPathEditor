@@ -52,10 +52,24 @@ pnpm start      # ビルド済みを起動
 - 「未付与」(⇧⌘G)で、項目コードが付いていないテキストと記入欄を強調する
 - 項目名ラベルへの付与は手動(1つのラベルが複数のコードにかかるため)
 
+### 現状(PoC マイルストーン6)
+- 「出力」(⌘E)で、確定レイヤーのオブジェクトをプロジェクトの `exports/` に出力する
+  - `output.pdf`: PDFKit で生成。Text は実フォントのテキスト(使った文字だけをサブセット埋め込み、コピー・検索可)。「輪郭Path」を付けた Text はグリフの輪郭で描く
+  - `page-NNNN.svg`: ページごとの SVG(pt、左上原点)。各要素に `id`・`data-role`・`data-field-code` を付ける
+  - `output.json`: 二次利用向け。オブジェクトの一覧(外接矩形付き)と、項目コードごとの索引(記入欄の矩形など)
+- 出力PDFを背景と同じ解像度でラスタライズして背景と比べ、再現率・過剰率・不一致画素率を出す(1画素のずれは許容)。結果は画面と `verify.json`、差分画像は `verify-page-NNNN-diff.png`(一致=黒 / 欠落=赤 / 過剰=シアン)
+- 記入欄の範囲(線も塗りもない Path)は PDF / SVG には描かず、JSON にだけ出す
+
+### 最近使ったプロジェクト
+- 取り込んだ・開いたプロジェクトを 10 件まで覚え、起動直後の画面、ツールバーのプルダウン、メニュー「ファイル > 最近使ったプロジェクト」から開ける
+- 一覧はアプリの設定フォルダ(Electron の `userData`)の `recent-projects.json` に保存する。フォルダがなくなったプロジェクトは一覧に出さない
+- 開発中の作業用プロジェクトは `out/projects/` に置く(`out/` は Git 管理外。ビルドで消えるのは `out/main`・`out/preload`・`out/renderer` だけ)
+
 ### 構成
 - `src/main/` ファイルI/O、プロジェクト管理、PDFラスタライズと候補抽出(utility process)
 - `src/main/vectorize/` Vectorizer の実装(罫線検出)
 - `src/main/ocr/` OCR エンジンと後処理
+- `src/main/export/` PDF / SVG / JSON の出力と差分検証
 - `native/vision-ocr/` macOS Vision を呼ぶ Swift ヘルパー
 - `scripts/` フォント取得スクリプト
 - `src/preload/` renderer に公開するAPI

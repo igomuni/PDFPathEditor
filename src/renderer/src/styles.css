@@ -364,3 +364,55 @@ input[type='text'] {
 .highlight-untagged {
   fill: rgba(255, 60, 60, 0.22);
 }
+
+.recent-select {
+  max-width: 190px;
+}
+
+.recent-list {
+  margin-top: 20px;
+  width: min(640px, 100%);
+  text-align: left;
+}
+
+.recent-list h2 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.recent-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.recent-list button {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.recent-list .name {
+  flex: none;
+  font-weight: 600;
+}
+
+.recent-list .path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.recent-list .date {
+  flex: none;
+  color: var(--muted);
+}

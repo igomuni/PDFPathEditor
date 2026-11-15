@@ -1,8 +1,9 @@
-import { basename, extname, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type MenuItemConstructorOptions } from 'electron'
-import { IPC, type DetectTarget, type ImportOptions, type MenuCommand, type OpenedProject } from '../shared/ipc'
+import { IPC, type DetectTarget, type ImportOptions, type MenuCommand, type OpenedProject, type RecentProject } from '../shared/ipc'
 import type { DocumentModel } from '../shared/model'
 import {
+  exportDocument,
   detectCandidates,
   detectText,
   importPdf,
@@ -15,11 +16,30 @@ import {
   type ResourcePaths
 } from './project'
 import type { OcrEngineId } from '../shared/ocr'
+import { RecentProjects } from './recent'
 import { DEFAULT_VECTORIZER_ID } from '../shared/vectorizer'
 
 let mainWindow: BrowserWindow | null = null
 // 開いているプロジェクト。renderer から任意パスを受け取らないよう main 側で保持する
 let currentProjectDir: string | null = null
+// メニューに出している、最近使ったプロジェクト
+let recentList: RecentProject[] = []
+const recentProjects = new RecentProjects(join(app.getPath('userData'), 'recent-projects.json'))
+
+/** 一覧を読み直して、メニューと画面に反映する */
+async function refreshRecent(): Promise<void> {
+  recentList = await recentProjects.list()
+  buildMenu()
+  mainWindow?.webContents.send(IPC.recentProjectsChanged, recentList)
+}
+
+/** 開いたプロジェクトとして覚える */
+async function rememberProject(projectDir: string): Promise<void> {
+  currentProjectDir = projectDir
+  // 一覧の保存に失敗しても、プロジェクトを開くこと自体は止めない
+  await recentProjects.add(projectDir).catch(() => {})
+  await refreshRecent()
+}
 
 /** `pnpm fonts` / `pnpm ocr:build` の出力先(開発時はリポジトリ直下の resources/) */
 function resourcePaths(): ResourcePaths {
@@ -81,8 +101,25 @@ function buildMenu(): void {
       submenu: [
         item('PDFを取り込む…', 'CmdOrCtrl+I', 'import-pdf'),
         item('プロジェクトを開く…', 'CmdOrCtrl+O', 'open-project'),
+        {
+          label: '最近使ったプロジェクト',
+          submenu:
+            recentList.length === 0
+              ? [{ label: '(なし)', enabled: false }]
+              : [
+                  ...recentList.map(
+                    (entry): MenuItemConstructorOptions => ({
+                      label: `${basename(entry.dir)} — ${dirname(entry.dir)}`,
+                      click: () => mainWindow?.webContents.send(IPC.recentProjectPicked, entry.dir)
+                    })
+                  ),
+                  { type: 'separator' },
+                  { label: '一覧を消去', click: () => void recentProjects.clear().then(refreshRecent) }
+                ]
+        },
         { type: 'separator' },
         item('保存', 'CmdOrCtrl+S', 'save'),
+        item('出力(PDF / SVG / JSON)と検証', 'CmdOrCtrl+E', 'export'),
         { type: 'separator' },
         process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' }
       ]
@@ -156,7 +193,7 @@ function registerIpc(): void {
     if (dest.canceled || !dest.filePath) return null
 
     const document = await importPdf(pdfPath, dest.filePath, options)
-    currentProjectDir = dest.filePath
+    await rememberProject(dest.filePath)
     return { projectDir: dest.filePath, document }
   })
 
@@ -170,12 +207,29 @@ function registerIpc(): void {
     if (picked.canceled || picked.filePaths.length === 0) return null
     const projectDir = picked.filePaths[0]
     const document = await loadDocument(projectDir)
-    currentProjectDir = projectDir
+    await rememberProject(projectDir)
     return { projectDir, document }
   })
 
+  ipcMain.handle(IPC.openRecentProject, async (_event, dir: string): Promise<OpenedProject> => {
+    // renderer から任意のパスを開かせない。一覧にあるものだけ受け付ける
+    if (!(await recentProjects.list()).some((entry) => entry.dir === dir)) {
+      await refreshRecent()
+      throw new Error(`最近使ったプロジェクトの一覧にありません: ${dir}`)
+    }
+    const document = await loadDocument(dir)
+    await rememberProject(dir)
+    return { projectDir: dir, document }
+  })
+  ipcMain.handle(IPC.listRecentProjects, () => recentProjects.list())
+  ipcMain.handle(IPC.clearRecentProjects, () => recentProjects.clear().then(refreshRecent))
+
   ipcMain.handle(IPC.saveDocument, (_event, document: DocumentModel) =>
     saveDocument(requireProjectDir(), document, resourcePaths())
+  )
+
+  ipcMain.handle(IPC.exportDocument, (_event, document: DocumentModel) =>
+    exportDocument(requireProjectDir(), document, resourcePaths())
   )
 
   ipcMain.handle(IPC.readAsset, (_event, assetRel: string) => readAsset(requireProjectDir(), assetRel))
@@ -195,6 +249,7 @@ function registerIpc(): void {
 void app.whenReady().then(() => {
   registerIpc()
   buildMenu()
+  void refreshRecent()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -4,7 +4,15 @@ import type { OcrEngineId } from './ocr'
 export const IPC = {
   importPdf: 'project:import-pdf',
   openProject: 'project:open',
+  openRecentProject: 'project:open-recent',
+  listRecentProjects: 'project:list-recent',
+  clearRecentProjects: 'project:clear-recent',
+  /** main → renderer: メニューで最近使ったプロジェクトが選ばれた */
+  recentProjectPicked: 'project:recent-picked',
+  /** main → renderer: 最近使ったプロジェクトの一覧が変わった */
+  recentProjectsChanged: 'project:recent-changed',
   saveDocument: 'project:save-document',
+  exportDocument: 'project:export',
   readAsset: 'project:read-asset',
   detectCandidates: 'project:detect-candidates',
   detectText: 'project:detect-text',
@@ -27,10 +35,18 @@ export interface OpenedProject {
   document: DocumentModel
 }
 
+export interface RecentProject {
+  /** プロジェクトフォルダの絶対パス */
+  dir: string
+  /** 最後に開いた日時(ISO 8601) */
+  openedAt: string
+}
+
 export type MenuCommand =
   | 'import-pdf'
   | 'open-project'
   | 'save'
+  | 'export'
   | 'undo'
   | 'redo'
   | 'detect-lines'
@@ -91,4 +107,11 @@ export interface OcrRequest {
   fontWeight: number
   visionBinary: string
   tesseractLangPath: string
+}
+
+export interface ExportRequest {
+  projectDir: string
+  document: DocumentModel
+  /** フォントを探すフォルダ(先のものを優先) */
+  fontDirs: string[]
 }
