@@ -275,6 +275,8 @@ export async function addPages(projectDir: string, sourceId: string, options: Im
  * removeSource が true で、その元PDFを使うページが他になければ、元PDFも消す。
  */
 export async function deletePage(projectDir: string, pageId: string, removeSource: boolean): Promise<{ removedSourceId: string | null }> {
+  // フォルダごと消すので、IDがフォルダの外を指せないことを先に確かめる(目次のIDも readManifest で検証済み)
+  if (!isSafeId(pageId)) throw new Error(`ページIDが正しくありません: ${String(pageId)}`)
   const manifest = await readManifest(projectDir)
   if (!manifest) throw new Error('プロジェクトが新しい形式で保存されていません。先に保存してください')
   const ref = manifest.pages.find((page) => page.id === pageId)
@@ -317,6 +319,7 @@ async function readManifest(projectDir: string): Promise<ProjectManifest | null>
   const manifest = raw as ProjectManifest
   if (!Array.isArray(manifest.sources) || !Array.isArray(manifest.pages)) throw new Error('document.json の形式が正しくありません')
   for (const page of manifest.pages) if (!isSafeId(page.id)) throw new Error(`ページIDが正しくありません: ${String(page.id)}`)
+  for (const source of manifest.sources) if (!isSafeId(source.id)) throw new Error(`元PDFのIDが正しくありません: ${String(source.id)}`)
   return manifest
 }
 
