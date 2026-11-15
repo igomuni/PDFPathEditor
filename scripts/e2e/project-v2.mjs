@@ -23,9 +23,13 @@ const open = async (app) => {
   await app.waitIdle()
   await app.waitLoaded()
 }
-const pageOptions = (app) => app.evaluate(`[...document.querySelectorAll('.page-select option')].map((o) => o.textContent).join(' | ')`)
+// ページ一覧(左サイドバー)の内容。「ファイル名: p.2 候補 0 / 確定 0, …」
+const pageOptions = (app) =>
+  app.evaluate(`[...document.querySelectorAll('.page-tree .source')].flatMap((s) => [...s.querySelectorAll('.page-row')].map((r) => s.querySelector('.source-row .content').textContent + ' ' + r.querySelector('.content').textContent)).join(' | ')`)
 const selectPage = (app, index) =>
-  app.evaluate(`(() => { const el = document.querySelector('.page-select'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(el, el.options[${index}].value); el.dispatchEvent(new Event('change', { bubbles: true })) })()`)
+  app.evaluate(`document.querySelectorAll('.page-tree .page-row')[${index}].dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`)
+const setInput = (app, selector, value) =>
+  app.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event('input', { bubbles: true })) })()`)
 const setPages = (app, spec) =>
   app.evaluate(`(() => { const el = document.querySelector('.pages-spec'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ${JSON.stringify(spec)}); el.dispatchEvent(new Event('input', { bubbles: true })) })()`)
 
@@ -140,10 +144,44 @@ if (secondPdf) {
   } finally {
     await app.close()
   }
-  app = await launch({ env: { E2E_PROJECT: fresh } })
+  // 確認ダイアログの応答 0 = 「削除」「元 PDF は残す」
+  app = await launch({ env: { E2E_PROJECT: fresh, E2E_MESSAGE: '0' } })
   try {
     await open(app)
     check('開き直して4ページある', (await pageOptions(app)).split(' | ').length === 4, await pageOptions(app))
+
+    // 取り込み済みのPDFから、PDFを選び直さずにページを追加する
+    await app.evaluate(`document.querySelector('.page-tree .source-row button').click()`)
+    await app.sleep(200)
+    await setInput(app, '.page-tree .add-row input', '5')
+    await app.evaluate(`document.querySelector('.page-tree .add-row button').click()`)
+    await app.waitIdle()
+    await app.waitLoaded()
+    check('一覧の「+」でページを追加できる', /p\.5 を追加/.test(await app.info()) && /p\.5\//.test(await app.statusBar()), await pageOptions(app))
+
+    // 編集して未保存の印が付く
+    await app.click('罫線を検出')
+    await app.waitIdle()
+    const dirtyRows = await app.evaluate(`[...document.querySelectorAll('.page-tree .page-row')].filter((r) => r.querySelector('.dirty').textContent).map((r) => r.querySelector('.content').textContent).join(',')`)
+    check('変更したページに未保存の印が付く', dirtyRows === 'p.5', dirtyRows)
+
+    // 別のPDFの唯一のページを削除する(元PDFは残す)
+    const lastIndex = (await pageOptions(app)).split(' | ').length - 1
+    await app.evaluate(`document.querySelectorAll('.page-tree .page-row')[${lastIndex}].querySelector('button').click()`)
+    await app.waitIdle()
+    await app.sleep(400)
+    const m = readJson(join(fresh, 'document.json'))
+    check('ページを削除できる(元 PDF は残す)', /削除しました/.test(await app.info()) && m.pages.length === 4 && m.sources.length === 2 && readdirSync(join(fresh, 'pages')).length === 4 && readdirSync(join(fresh, 'assets')).length === 4, (await app.info()) || (await app.error()))
+    check('削除の前に、他のページの変更は保存される', !(await app.title()).startsWith('●'), await app.title())
+    check('ページのないPDFも一覧に残る', (await app.evaluate(`document.querySelectorAll('.page-tree .source').length`)) === 2)
+    check('コンソールエラーがない(ページ一覧)', app.consoleErrors.length === 0, app.consoleErrors.join(' / '))
+  } finally {
+    await app.close()
+  }
+  app = await launch({ env: { E2E_PROJECT: fresh } })
+  try {
+    await open(app)
+    check('開き直して、追加と削除が残っている', (await pageOptions(app)).split(' | ').length === 4 && /p\.5/.test(await pageOptions(app)), await pageOptions(app))
   } finally {
     await app.close()
   }

@@ -1,10 +1,13 @@
 import { basename, dirname, extname, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type MenuItemConstructorOptions } from 'electron'
-import { IPC, type DetectTarget, type ImportOptions, type MenuCommand, type AddedPages, type OpenedProject, type RecentProject, type SavePayload, type UnsavedChoice } from '../shared/ipc'
+import { IPC, type DetectTarget, type ImportOptions, type MenuCommand, type AddedPages, type DeletedPage, type OpenedProject, type RecentProject, type SavePayload, type UnsavedChoice } from '../shared/ipc'
 import type { PickedCorrections } from '../shared/corrections'
 import type { DocumentModel } from '../shared/model'
 import {
+  addPages,
   addPdf,
+  deletePage,
+  isLastPageOfSource,
   exportDocument,
   exportReview,
   readCorrections,
@@ -263,6 +266,41 @@ function registerIpc(): void {
     if (picked.canceled || picked.filePaths.length === 0) return null
     await settings.rememberDir('pdf', dirname(picked.filePaths[0])).catch(() => {})
     return addPdf(projectDir, picked.filePaths[0], options)
+  })
+
+  // 取り込み済みのPDFから、ページを追加する(PDFを選び直さない)
+  ipcMain.handle(IPC.addPages, (_event, sourceId: string, options: ImportOptions): Promise<AddedPages> =>
+    addPages(requireProjectDir(), sourceId, options)
+  )
+
+  // ページを削除する。元に戻せないので、ここで確かめる
+  ipcMain.handle(IPC.deletePage, async (event, pageId: string, label: string): Promise<DeletedPage | null> => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return null
+    const projectDir = requireProjectDir()
+    const confirm = await dialog.showMessageBox(win, {
+      type: 'warning',
+      message: `${String(label).slice(0, 200)} を削除しますか?`,
+      detail: 'このページの候補・確定オブジェクト、背景ラスター、出力を削除します。元に戻せません。',
+      buttons: ['削除', 'キャンセル'],
+      defaultId: 1,
+      cancelId: 1
+    })
+    if (confirm.response !== 0) return null
+    let removeSource = false
+    if (await isLastPageOfSource(projectDir, pageId)) {
+      const answer = await dialog.showMessageBox(win, {
+        type: 'question',
+        message: 'この PDF を使うページがなくなります。元 PDF もプロジェクトから削除しますか?',
+        detail: '残しておくと、あとで PDF を選び直さずにページを追加できます。',
+        buttons: ['元 PDF は残す', '元 PDF も削除'],
+        defaultId: 0,
+        cancelId: 0
+      })
+      removeSource = answer.response === 1
+    }
+    const { removedSourceId } = await deletePage(projectDir, pageId, removeSource)
+    return { pageId, removedSourceId }
   })
 
   ipcMain.handle(IPC.openProject, async (event): Promise<OpenedProject | null> => {

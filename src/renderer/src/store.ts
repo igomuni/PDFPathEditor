@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from 'react'
-import type { AddedPages, OpenedProject } from '../../shared/ipc'
+import type { AddedPages, DeletedPage, OpenedProject } from '../../shared/ipc'
 import type { DocumentModel, Page } from '../../shared/model'
 import { History, type Command } from './history.ts'
+import { withoutPage } from './pageTree.ts'
 
 export interface Selection {
   /** 選択中のオブジェクトID */
@@ -147,6 +148,23 @@ class DocumentStore {
       ...this.state,
       savedDocument: savedDocument === document ? next : savedDocument && merge(savedDocument),
       currentPageId: added.pages[0]?.id ?? this.state.currentPageId,
+      selection: EMPTY_SELECTION
+    }
+    this.setDocument(next)
+  }
+
+  /**
+   * 削除したページを外す。ファイルは main が削除済みなので、保存済みの状態からも外す。
+   * 削除は元に戻せないので、履歴は捨てる(消えたページへの操作を Undo しても意味がないため)。
+   */
+  removePage(deleted: DeletedPage): void {
+    const { document, savedDocument } = this.state
+    if (!document) return
+    const next = withoutPage(document, deleted.pageId, deleted.removedSourceId)
+    this.history = new History()
+    this.state = {
+      ...this.state,
+      savedDocument: savedDocument === document ? next : savedDocument && withoutPage(savedDocument, deleted.pageId, deleted.removedSourceId),
       selection: EMPTY_SELECTION
     }
     this.setDocument(next)

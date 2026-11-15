@@ -4,6 +4,8 @@ import type { OcrEngineId } from './ocr'
 export const IPC = {
   importPdf: 'project:import-pdf',
   addPdf: 'project:add-pdf',
+  addPages: 'project:add-pages',
+  deletePage: 'project:delete-page',
   openProject: 'project:open',
   openRecentProject: 'project:open-recent',
   listRecentProjects: 'project:list-recent',
@@ -56,6 +58,13 @@ export interface SavePayload {
   pages: Page[]
   /** 目次から消えたページ(ページのファイルを消す) */
   removedPageIds: string[]
+}
+
+/** 削除したページ。ファイルは削除済み。利用者がやめたときは null を返す */
+export interface DeletedPage {
+  pageId: string
+  /** 元PDFも削除したときは、その id */
+  removedSourceId: string | null
 }
 
 /** 開いているプロジェクトに追加したページ。目次とページのファイルは書き込み済み */

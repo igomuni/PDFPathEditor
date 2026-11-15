@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
-import { IPC, type AddedPages, type DetectTarget, type SavePayload, type ImportOptions, type MenuCommand, type OpenedProject, type RecentProject, type UnsavedChoice } from '../shared/ipc'
+import { IPC, type AddedPages, type DeletedPage, type DetectTarget, type SavePayload, type ImportOptions, type MenuCommand, type OpenedProject, type RecentProject, type UnsavedChoice } from '../shared/ipc'
 import type { PickedCorrections, ReviewExportResult } from '../shared/corrections'
 import type { ExportResult } from '../shared/export'
 import type { FontFace } from '../shared/fonts'
@@ -10,6 +10,10 @@ const api = {
   importPdf: (options: ImportOptions): Promise<OpenedProject | null> =>
     ipcRenderer.invoke(IPC.importPdf, options),
   addPdf: (options: ImportOptions): Promise<AddedPages | null> => ipcRenderer.invoke(IPC.addPdf, options),
+  addPages: (sourceId: string, options: ImportOptions): Promise<AddedPages> =>
+    ipcRenderer.invoke(IPC.addPages, sourceId, options),
+  deletePage: (pageId: string, label: string): Promise<DeletedPage | null> =>
+    ipcRenderer.invoke(IPC.deletePage, pageId, label),
   openProject: (): Promise<OpenedProject | null> => ipcRenderer.invoke(IPC.openProject),
   openRecentProject: (dir: string): Promise<OpenedProject> => ipcRenderer.invoke(IPC.openRecentProject, dir),
   listRecentProjects: (): Promise<RecentProject[]> => ipcRenderer.invoke(IPC.listRecentProjects),

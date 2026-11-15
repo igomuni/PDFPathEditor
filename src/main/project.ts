@@ -259,6 +259,56 @@ export async function addPdf(projectDir: string, pdfPath: string, options: Impor
   }
 }
 
+/** 取り込み済みのPDFから、ページを追加する */
+export async function addPages(projectDir: string, sourceId: string, options: ImportOptions): Promise<AddedPages> {
+  const manifest = await readManifest(projectDir)
+  const source = manifest?.sources.find((candidate) => candidate.id === sourceId)
+  if (!source) throw new Error(`取り込み済みのPDFが見つかりません: ${sourceId}`)
+  const abs = resolve(projectDir, source.file)
+  if (!abs.startsWith(resolve(projectDir, 'source') + sep)) throw new Error(`source 外のパスは読めません: ${source.file}`)
+  // 同じファイルなので、ハッシュが一致して元PDFは共有される
+  return addPdf(projectDir, abs, options)
+}
+
+/**
+ * ページを削除する(元に戻せない)。ページのファイル、背景ラスター、出力を消し、目次から外す。
+ * removeSource が true で、その元PDFを使うページが他になければ、元PDFも消す。
+ */
+export async function deletePage(projectDir: string, pageId: string, removeSource: boolean): Promise<{ removedSourceId: string | null }> {
+  const manifest = await readManifest(projectDir)
+  if (!manifest) throw new Error('プロジェクトが新しい形式で保存されていません。先に保存してください')
+  const ref = manifest.pages.find((page) => page.id === pageId)
+  if (!ref) throw new Error(`ページが見つかりません: ${pageId}`)
+  if (manifest.pages.length === 1) throw new Error('最後のページは削除できません')
+  const pages = manifest.pages.filter((page) => page.id !== pageId)
+  const source = manifest.sources.find((candidate) => candidate.id === ref.sourceId)
+  const unused = source !== undefined && !pages.some((page) => page.sourceId === source.id)
+  const dropSource = removeSource && unused
+  // 先に目次を書く(途中で止まっても、目次にないファイルが残るだけにする)
+  await writeJson(join(projectDir, DOCUMENT_FILE), {
+    ...manifest,
+    pages,
+    sources: dropSource ? manifest.sources.filter((candidate) => candidate.id !== source.id) : manifest.sources
+  })
+  await rm(join(projectDir, pageFileName(pageId)), { force: true })
+  // 旧形式から移行したページの背景は assets/ の直下にあるので、ここでは消えない(フォルダ単位で消せるものだけ消す)
+  await rm(join(projectDir, 'assets', pageId), { recursive: true, force: true })
+  await rm(join(projectDir, 'exports', pageId), { recursive: true, force: true })
+  if (dropSource && isSafeId(source.id)) {
+    const dir = join(projectDir, 'source', source.id)
+    for (const name of await readdir(dir).catch(() => [] as string[])) await chmod(join(dir, name), 0o644).catch(() => {})
+    await rm(dir, { recursive: true, force: true })
+  }
+  return { removedSourceId: dropSource ? source.id : null }
+}
+
+/** 元PDFを使っているページが pageId だけか(削除のとき、元PDFも消すか尋ねるため) */
+export async function isLastPageOfSource(projectDir: string, pageId: string): Promise<boolean> {
+  const manifest = await readManifest(projectDir)
+  const ref = manifest?.pages.find((page) => page.id === pageId)
+  return ref !== undefined && !manifest!.pages.some((page) => page.id !== pageId && page.sourceId === ref.sourceId)
+}
+
 /** 目次(version 2 の document.json)を読む。version 1 なら null */
 async function readManifest(projectDir: string): Promise<ProjectManifest | null> {
   const raw = JSON.parse(await readFile(join(projectDir, DOCUMENT_FILE), 'utf8')) as { version?: unknown }

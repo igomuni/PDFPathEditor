@@ -19,6 +19,7 @@ import { CorrectionsDialog } from './CorrectionsDialog'
 import { fitTextToBox } from './textMetrics'
 import { useFonts } from './fonts'
 import { ObjectList } from './ObjectListPanel'
+import { PageTree } from './PageTreePanel'
 import { isVisible } from './objectList'
 import { CodeList, collectCodes, TagSection } from './TagPanel'
 import { TextPanel } from './TextPanel'
@@ -193,6 +194,36 @@ export function App() {
     () =>
       run('保存中…', saveNow),
     [run, saveNow]
+  )
+
+  /** main がファイルを書き換える操作の前に、画面の変更を保存しておく */
+  const saveIfDirty = useCallback(async (): Promise<void> => {
+    const state = store.getState()
+    if (state.document && state.document !== state.savedDocument) await saveNow()
+  }, [saveNow])
+
+  const addPages = useCallback(
+    (sourceId: string, pages: string) =>
+      run('ページを追加中…', async () => {
+        await saveIfDirty()
+        const added = await window.api.addPages(sourceId, { pages, dpi })
+        store.appendPages(added)
+        const skipped = added.skippedPageNumbers.length > 0 ? `(取り込み済みの p.${added.skippedPageNumbers.join(', ')} は飛ばしました)` : ''
+        setInfo(`${added.source.originalFileName} の p.${added.pages.map((p) => p.sourcePageNumber).join(', ')} を追加しました${skipped}。`)
+      }),
+    [run, dpi, saveIfDirty]
+  )
+
+  const deletePage = useCallback(
+    (pageId: string, label: string) =>
+      run('ページを削除中…', async () => {
+        await saveIfDirty()
+        const deleted = await window.api.deletePage(pageId, label)
+        if (!deleted) return
+        store.removePage(deleted)
+        setInfo(`${label} を削除しました${deleted.removedSourceId ? '(元 PDF も削除しました)' : ''}。`)
+      }),
+    [run, saveIfDirty]
   )
 
   const exportAll = useCallback(
@@ -445,23 +476,6 @@ export function App() {
     <div className="app">
       <header className="toolbar">
         {importControls}
-        {document && document.pages.length > 1 && page && (
-          <select
-            className="page-select"
-            value={page.id}
-            title="表示するページ"
-            onChange={(e) => {
-              store.setCurrentPage(e.target.value)
-              e.currentTarget.blur()
-            }}
-          >
-            {document.pages.map((candidate) => (
-              <option key={candidate.id} value={candidate.id}>
-                {sourceOf(document, candidate)?.originalFileName ?? '?'} p.{candidate.sourcePageNumber}
-              </option>
-            ))}
-          </select>
-        )}
         {document && background && (
           <>
             <span className="separator" />
@@ -653,6 +667,16 @@ export function App() {
       <div className="body">
         {page && (
           <aside className="sidebar">
+            {document && (
+              <PageTree
+                document={document}
+                savedDocument={savedDocument}
+                currentPageId={page.id}
+                busy={busy !== null}
+                onAddPages={(sourceId, pages) => void addPages(sourceId, pages)}
+                onDeletePage={(pageId, label) => void deletePage(pageId, label)}
+              />
+            )}
             <ObjectList page={page} selection={selection} onReveal={(object) => canvasRef.current?.reveal(objectBounds(object))} />
           </aside>
         )}
