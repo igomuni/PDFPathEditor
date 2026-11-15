@@ -3,6 +3,7 @@ import { DEFAULT_IMPORT_DPI, DEFAULT_IMPORT_PAGE, type MenuCommand, type RecentP
 import { Canvas, type CanvasHandle, type CanvasStatus } from './Canvas'
 import type { OcrEngineId, OcrEngineInfo } from '../../shared/ocr'
 import {
+  applyCorrections,
   assignFieldCodes,
   confirmCandidates,
   deleteObjects,
@@ -12,6 +13,9 @@ import {
   setLayerVisible
 } from './commands'
 import { objectBounds } from './coords'
+import { planCorrections, type CorrectionPlan } from './corrections'
+import { CorrectionsDialog } from './CorrectionsDialog'
+import { fitTextToBox } from './textMetrics'
 import { useFonts } from './fonts'
 import { CodeList, collectCodes, TagSection } from './TagPanel'
 import { TextPanel } from './TextPanel'
@@ -36,6 +40,7 @@ export function App() {
   const [ocrEngines, setOcrEngines] = useState<OcrEngineInfo[]>([])
   const [ocrEngineId, setOcrEngineId] = useState<OcrEngineId | null>(null)
   const [recent, setRecent] = useState<RecentProject[]>([])
+  const [pendingCorrections, setPendingCorrections] = useState<{ fileName: string; plan: CorrectionPlan } | null>(null)
 
   useEffect(() => {
     void window.api.listOcrEngines().then((engines) => {
@@ -105,30 +110,51 @@ export function App() {
     }
   }, [])
 
+  /** 保存する。失敗したら例外を投げる */
+  const saveNow = useCallback(async (): Promise<void> => {
+    const current = store.getState().document
+    if (!current) return
+    await window.api.saveDocument(current)
+    store.markSaved(current)
+  }, [])
+
+  /** 未保存の変更があれば、保存するか尋ねる。続けてよければ true */
+  const resolveUnsaved = useCallback(async (): Promise<boolean> => {
+    const state = store.getState()
+    if (state.document === state.savedDocument) return true
+    const choice = await window.api.confirmUnsaved()
+    if (choice === 'cancel') return false
+    if (choice === 'save') await saveNow()
+    return true
+  }, [saveNow])
+
   const importPdf = useCallback(
     () =>
       run('PDFを取り込み中…', async () => {
+        if (!(await resolveUnsaved())) return
         const project = await window.api.importPdf({ pageNumber, dpi })
         if (project) store.open(project)
       }),
-    [run, pageNumber, dpi]
+    [run, pageNumber, dpi, resolveUnsaved]
   )
 
   const openProject = useCallback(
     () =>
       run('プロジェクトを開いています…', async () => {
+        if (!(await resolveUnsaved())) return
         const project = await window.api.openProject()
         if (project) store.open(project)
       }),
-    [run]
+    [run, resolveUnsaved]
   )
 
   const openRecent = useCallback(
     (dir: string) =>
       run('プロジェクトを開いています…', async () => {
+        if (!(await resolveUnsaved())) return
         store.open(await window.api.openRecentProject(dir))
       }),
-    [run]
+    [run, resolveUnsaved]
   )
 
   useEffect(() => {
@@ -143,13 +169,8 @@ export function App() {
 
   const save = useCallback(
     () =>
-      run('保存中…', async () => {
-        const current = store.getState().document
-        if (!current) return
-        await window.api.saveDocument(current)
-        store.markSaved(current)
-      }),
-    [run]
+      run('保存中…', saveNow),
+    [run, saveNow]
   )
 
   const exportAll = useCallback(
@@ -170,6 +191,46 @@ export function App() {
       }),
     [run]
   )
+
+  const exportReview = useCallback(
+    () =>
+      run('確認用データを書き出し中…', async () => {
+        const current = store.getState().document
+        if (!current) return
+        const result = await window.api.exportReview(current)
+        setInfo(
+          `${result.dir} に確認用データを書き出しました(テキスト ${result.textCount} 件、取れていないインク ${result.uncoveredCount} か所、背景に合っていないテキスト ${result.misfitCount} 件、ファイル ${result.files.length} 個)。`
+        )
+      }),
+    [run]
+  )
+
+  const importCorrections = useCallback(
+    () =>
+      run('修正ファイルを読み込み中…', async () => {
+        const current = store.getState().document
+        if (!current) return
+        const picked = await window.api.pickCorrections()
+        if (!picked) return
+        // 検証と計画だけ行い、適用はダイアログで確かめてから
+        setPendingCorrections({ fileName: picked.fileName, plan: planCorrections(current.pages, picked.data, fitTextToBox) })
+      }),
+    [run]
+  )
+
+  const applyPendingCorrections = (): void => {
+    const current = store.getState().document
+    if (!pendingCorrections || !current) return
+    const { plan, fileName } = pendingCorrections
+    setPendingCorrections(null)
+    store.execute(applyCorrections(current, plan))
+    store.sealHistory()
+    // 変わったところを確かめやすいよう、置換・追加したオブジェクトを選択する
+    store.select([...plan.replacements.keys(), ...plan.additions.map((object) => object.id)])
+    setInfo(
+      `${fileName} を適用しました(置換 ${plan.replacements.size} 件 / 追加 ${plan.additions.length} 件 / 削除 ${plan.deletions.size} 件${plan.rejected.length > 0 ? ` / 適用できず ${plan.rejected.length} 件` : ''})。変更したオブジェクトを選択しています。`
+    )
+  }
 
   const detectLines = useCallback(
     () =>
@@ -248,6 +309,8 @@ export function App() {
       'open-project': () => void openProject(),
       save: () => void save(),
       export: () => void exportAll(),
+      'export-review': () => void exportReview(),
+      'import-corrections': () => void importCorrections(),
       undo: () => store.undo(),
       redo: () => store.redo(),
       'detect-lines': () => void detectLines(),
@@ -265,7 +328,24 @@ export function App() {
       'zoom-100': () => canvasRef.current?.zoom100()
     }
     return window.api.onMenuCommand((command) => handlers[command]())
-  }, [importPdf, openProject, save, exportAll, detectLines, detectText])
+  }, [importPdf, openProject, save, exportAll, exportReview, importCorrections, detectLines, detectText])
+
+  // 未保存かどうかを main に伝える(閉じるときの確認用)
+  useEffect(() => {
+    window.api.setDirty(dirty)
+  }, [dirty])
+
+  // 閉じるときに「保存」が選ばれたら、保存してから閉じる。失敗したら閉じずにエラーを見せる
+  useEffect(
+    () =>
+      window.api.onSaveBeforeClose(() => {
+        void run('保存中…', async () => {
+          await saveNow()
+          window.api.closeNow()
+        })
+      }),
+    [run, saveNow]
+  )
 
   useEffect(() => {
     const name = projectDir ? projectDir.split(/[\\/]/).pop() : null
@@ -402,6 +482,20 @@ export function App() {
                 </option>
               ))}
             </select>
+            <button
+              onClick={() => void exportReview()}
+              disabled={busy !== null}
+              title="AI などに候補を確認してもらうためのデータ(候補の一覧とタイル画像)を exports/review/ に書き出す (⇧⌘E)"
+            >
+              確認用データ
+            </button>
+            <button
+              onClick={() => void importCorrections()}
+              disabled={busy !== null}
+              title="修正ファイル(JSON)を取り込み、内容を確かめてから一括で適用する (⇧⌘I)"
+            >
+              修正を取り込む…
+            </button>
             <button
               onClick={assignCodes}
               disabled={busy !== null}
@@ -548,6 +642,15 @@ export function App() {
           </aside>
         )}
       </div>
+
+      {pendingCorrections && (
+        <CorrectionsDialog
+          fileName={pendingCorrections.fileName}
+          plan={pendingCorrections.plan}
+          onApply={applyPendingCorrections}
+          onCancel={() => setPendingCorrections(null)}
+        />
+      )}
 
       <footer className="statusbar">
         {document && page ? (

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
-import { IPC, type DetectTarget, type ImportOptions, type MenuCommand, type OpenedProject, type RecentProject } from '../shared/ipc'
+import { IPC, type DetectTarget, type ImportOptions, type MenuCommand, type OpenedProject, type RecentProject, type UnsavedChoice } from '../shared/ipc'
+import type { PickedCorrections, ReviewExportResult } from '../shared/corrections'
 import type { ExportResult } from '../shared/export'
 import type { FontFace } from '../shared/fonts'
 import type { DocumentModel, PathObject, TextObject } from '../shared/model'
@@ -22,10 +23,21 @@ const api = {
     ipcRenderer.on(IPC.recentProjectsChanged, handler)
     return () => ipcRenderer.removeListener(IPC.recentProjectsChanged, handler)
   },
+  setDirty: (dirty: boolean): void => ipcRenderer.send(IPC.setDirty, dirty),
+  confirmUnsaved: (): Promise<UnsavedChoice> => ipcRenderer.invoke(IPC.confirmUnsaved),
+  onSaveBeforeClose: (listener: () => void): (() => void) => {
+    const handler = (): void => listener()
+    ipcRenderer.on(IPC.saveBeforeClose, handler)
+    return () => ipcRenderer.removeListener(IPC.saveBeforeClose, handler)
+  },
+  closeNow: (): void => ipcRenderer.send(IPC.closeNow),
   saveDocument: (document: DocumentModel): Promise<void> =>
     ipcRenderer.invoke(IPC.saveDocument, document),
   exportDocument: (document: DocumentModel): Promise<ExportResult> =>
     ipcRenderer.invoke(IPC.exportDocument, document),
+  exportReview: (document: DocumentModel): Promise<ReviewExportResult> =>
+    ipcRenderer.invoke(IPC.exportReview, document),
+  pickCorrections: (): Promise<PickedCorrections | null> => ipcRenderer.invoke(IPC.pickCorrections),
   readAsset: (assetRel: string): Promise<Uint8Array> => ipcRenderer.invoke(IPC.readAsset, assetRel),
   detectCandidates: (target: DetectTarget): Promise<PathObject[]> =>
     ipcRenderer.invoke(IPC.detectCandidates, target),

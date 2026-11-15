@@ -24,7 +24,9 @@ export default defineConfig({
           // OCR(Text候補抽出)用 utility process のエントリ
           'ocr-worker': resolve(__dirname, 'src/main/ocr-worker.ts'),
           // 出力(PDF / SVG / JSON)と差分検証用 utility process のエントリ
-          'export-worker': resolve(__dirname, 'src/main/export-worker.ts')
+          'export-worker': resolve(__dirname, 'src/main/export-worker.ts'),
+          // 確認用データ(候補の一覧とタイル画像)の書き出し用 utility process のエントリ
+          'review-worker': resolve(__dirname, 'src/main/review-worker.ts')
         }
       }
     }

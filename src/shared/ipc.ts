@@ -7,12 +7,22 @@ export const IPC = {
   openRecentProject: 'project:open-recent',
   listRecentProjects: 'project:list-recent',
   clearRecentProjects: 'project:clear-recent',
+  /** 未保存の変更があるかを main に伝える(ウィンドウを閉じるときの確認用) */
+  setDirty: 'project:set-dirty',
+  /** 未保存の変更をどうするか尋ねる */
+  confirmUnsaved: 'project:confirm-unsaved',
+  /** main → renderer: 保存してからウィンドウを閉じる */
+  saveBeforeClose: 'project:save-before-close',
+  /** 保存が済んだのでウィンドウを閉じてよい */
+  closeNow: 'project:close-now',
   /** main → renderer: メニューで最近使ったプロジェクトが選ばれた */
   recentProjectPicked: 'project:recent-picked',
   /** main → renderer: 最近使ったプロジェクトの一覧が変わった */
   recentProjectsChanged: 'project:recent-changed',
   saveDocument: 'project:save-document',
   exportDocument: 'project:export',
+  exportReview: 'project:export-review',
+  pickCorrections: 'project:pick-corrections',
   readAsset: 'project:read-asset',
   detectCandidates: 'project:detect-candidates',
   detectText: 'project:detect-text',
@@ -35,6 +45,9 @@ export interface OpenedProject {
   document: DocumentModel
 }
 
+/** 未保存の変更の扱い */
+export type UnsavedChoice = 'save' | 'discard' | 'cancel'
+
 export interface RecentProject {
   /** プロジェクトフォルダの絶対パス */
   dir: string
@@ -47,6 +60,8 @@ export type MenuCommand =
   | 'open-project'
   | 'save'
   | 'export'
+  | 'export-review'
+  | 'import-corrections'
   | 'undo'
   | 'redo'
   | 'detect-lines'

@@ -403,6 +403,8 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     }
 
     const onKeyDown = (e: KeyboardEvent): void => {
+      // ダイアログを開いている間は、キャンバスのキー操作(Enter で確定など)をしない
+      if (window.document.querySelector('.modal-backdrop')) return
       if (isEditable(e.target) || e.metaKey || e.ctrlKey) return
       if (editKey(e)) {
         e.preventDefault()

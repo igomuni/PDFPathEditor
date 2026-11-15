@@ -6,6 +6,7 @@ import { createRequire } from 'node:module'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { utilityProcess } from 'electron'
 import { BUNDLED_FONTS, DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT, type FontFace } from '../shared/fonts'
+import type { PickedCorrections, ReviewExportResult } from '../shared/corrections'
 import type { ExportResult } from '../shared/export'
 import type {
   DetectTarget,
@@ -327,4 +328,31 @@ export async function exportDocument(
     document,
     fontDirs: [join(projectDir, 'fonts'), resources.fontsDir]
   })
+}
+
+/** AI などに候補を確認してもらうためのデータ(候補の一覧とタイル画像)を exports/review/ に書き出す */
+export async function exportReview(
+  projectDir: string,
+  document: DocumentModel,
+  resources: ResourcePaths
+): Promise<ReviewExportResult> {
+  return runWorker<ExportRequest, ReviewExportResult>('review-worker.js', 'Review', {
+    projectDir,
+    document,
+    fontDirs: [join(projectDir, 'fonts'), resources.fontsDir]
+  })
+}
+
+const MAX_CORRECTIONS_BYTES = 5 * 1024 * 1024
+
+/** 修正ファイル(JSON)を読む。中身の検証は renderer 側(corrections.ts)で行う */
+export async function readCorrections(path: string): Promise<PickedCorrections> {
+  const { size } = await stat(path)
+  if (size > MAX_CORRECTIONS_BYTES) throw new Error(`修正ファイルが大きすぎます(${size} バイト、上限 5MB)`)
+  const content = await readFile(path, 'utf8')
+  try {
+    return { fileName: basename(path), data: JSON.parse(content) as unknown }
+  } catch (err) {
+    throw new Error(`修正ファイルを JSON として読めません: ${err instanceof Error ? err.message : String(err)}`)
+  }
 }

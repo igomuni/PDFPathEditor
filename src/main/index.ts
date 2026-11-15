@@ -1,9 +1,12 @@
 import { basename, dirname, extname, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type MenuItemConstructorOptions } from 'electron'
-import { IPC, type DetectTarget, type ImportOptions, type MenuCommand, type OpenedProject, type RecentProject } from '../shared/ipc'
+import { IPC, type DetectTarget, type ImportOptions, type MenuCommand, type OpenedProject, type RecentProject, type UnsavedChoice } from '../shared/ipc'
+import type { PickedCorrections } from '../shared/corrections'
 import type { DocumentModel } from '../shared/model'
 import {
   exportDocument,
+  exportReview,
+  readCorrections,
   detectCandidates,
   detectText,
   importPdf,
@@ -17,6 +20,7 @@ import {
 } from './project'
 import type { OcrEngineId } from '../shared/ocr'
 import { RecentProjects } from './recent'
+import { Settings } from './settings'
 import { DEFAULT_VECTORIZER_ID } from '../shared/vectorizer'
 
 let mainWindow: BrowserWindow | null = null
@@ -25,6 +29,24 @@ let currentProjectDir: string | null = null
 // メニューに出している、最近使ったプロジェクト
 let recentList: RecentProject[] = []
 const recentProjects = new RecentProjects(join(app.getPath('userData'), 'recent-projects.json'))
+const settings = new Settings(join(app.getPath('userData'), 'settings.json'))
+// 画面のドキュメントに未保存の変更があるか(renderer から知らされる)
+let documentDirty = false
+// 確認が済んで、次の close をそのまま通すか
+let closeConfirmed = false
+
+/** 未保存の変更をどうするか尋ねる */
+async function askUnsaved(win: BrowserWindow): Promise<UnsavedChoice> {
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    message: '保存していない変更があります',
+    detail: '保存しないと、最後に保存したあとの変更は失われます。',
+    buttons: ['保存', '保存しない', 'キャンセル'],
+    defaultId: 0,
+    cancelId: 2
+  })
+  return response === 0 ? 'save' : response === 1 ? 'discard' : 'cancel'
+}
 
 /** 一覧を読み直して、メニューと画面に反映する */
 async function refreshRecent(): Promise<void> {
@@ -69,7 +91,24 @@ function createWindow(): void {
   win.webContents.on('did-finish-load', () => {
     void win.webContents.setVisualZoomLevelLimits(1, 1).catch(() => {})
   })
+  // 未保存の変更があれば、閉じる前に確かめる
+  win.on('close', (event) => {
+    if (closeConfirmed || !documentDirty) return
+    event.preventDefault()
+    void askUnsaved(win).then((choice) => {
+      if (choice === 'cancel') return
+      if (choice === 'save') {
+        // 保存は画面のドキュメントが要るので renderer に頼み、済んだら closeNow が来る
+        win.webContents.send(IPC.saveBeforeClose)
+        return
+      }
+      closeConfirmed = true
+      win.close()
+    })
+  })
   win.on('closed', () => {
+    closeConfirmed = false
+    documentDirty = false
     if (mainWindow === win) mainWindow = null
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -120,6 +159,9 @@ function buildMenu(): void {
         { type: 'separator' },
         item('保存', 'CmdOrCtrl+S', 'save'),
         item('出力(PDF / SVG / JSON)と検証', 'CmdOrCtrl+E', 'export'),
+        { type: 'separator' },
+        item('確認用データを書き出す', 'Shift+CmdOrCtrl+E', 'export-review'),
+        item('修正を取り込む…', 'Shift+CmdOrCtrl+I', 'import-corrections'),
         { type: 'separator' },
         process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' }
       ]
@@ -177,22 +219,30 @@ function registerIpc(): void {
     if (!win) return null
     const picked = await dialog.showOpenDialog(win, {
       title: '取り込むPDFを選択',
+      // 前回 PDF を選んだフォルダから始める
+      defaultPath: await settings.lastDir('pdf', app.getPath('documents')),
       properties: ['openFile'],
       filters: [{ name: 'PDF', extensions: ['pdf'] }]
     })
     if (picked.canceled || picked.filePaths.length === 0) return null
     const pdfPath = picked.filePaths[0]
+    await settings.rememberDir('pdf', dirname(pdfPath)).catch(() => {})
 
     const dest = await dialog.showSaveDialog(win, {
       title: 'プロジェクトフォルダの作成先',
       buttonLabel: '作成',
       nameFieldLabel: 'プロジェクト名:',
-      defaultPath: join(app.getPath('documents'), `${basename(pdfPath, extname(pdfPath))}-project`),
+      // 前回プロジェクトを置いたフォルダに作る
+      defaultPath: join(
+        await settings.lastDir('projectParent', app.getPath('documents')),
+        `${basename(pdfPath, extname(pdfPath))}-project`
+      ),
       properties: ['createDirectory', 'showOverwriteConfirmation']
     })
     if (dest.canceled || !dest.filePath) return null
 
     const document = await importPdf(pdfPath, dest.filePath, options)
+    await settings.rememberDir('projectParent', dirname(dest.filePath)).catch(() => {})
     await rememberProject(dest.filePath)
     return { projectDir: dest.filePath, document }
   })
@@ -202,11 +252,14 @@ function registerIpc(): void {
     if (!win) return null
     const picked = await dialog.showOpenDialog(win, {
       title: 'プロジェクトフォルダを選択',
+      // 前回開いたプロジェクトの親フォルダから始める
+      defaultPath: await settings.lastDir('projectParent', app.getPath('documents')),
       properties: ['openDirectory']
     })
     if (picked.canceled || picked.filePaths.length === 0) return null
     const projectDir = picked.filePaths[0]
     const document = await loadDocument(projectDir)
+    await settings.rememberDir('projectParent', dirname(projectDir)).catch(() => {})
     await rememberProject(projectDir)
     return { projectDir, document }
   })
@@ -221,6 +274,19 @@ function registerIpc(): void {
     await rememberProject(dir)
     return { projectDir: dir, document }
   })
+  ipcMain.on(IPC.setDirty, (event, dirty: boolean) => {
+    documentDirty = dirty === true
+    // macOS: 閉じるボタンに未保存の印を出す
+    BrowserWindow.fromWebContents(event.sender)?.setDocumentEdited(documentDirty)
+  })
+  ipcMain.handle(IPC.confirmUnsaved, (event): Promise<UnsavedChoice> => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    return win ? askUnsaved(win) : Promise.resolve('cancel')
+  })
+  ipcMain.on(IPC.closeNow, (event) => {
+    closeConfirmed = true
+    BrowserWindow.fromWebContents(event.sender)?.close()
+  })
   ipcMain.handle(IPC.listRecentProjects, () => recentProjects.list())
   ipcMain.handle(IPC.clearRecentProjects, () => recentProjects.clear().then(refreshRecent))
 
@@ -231,6 +297,25 @@ function registerIpc(): void {
   ipcMain.handle(IPC.exportDocument, (_event, document: DocumentModel) =>
     exportDocument(requireProjectDir(), document, resourcePaths())
   )
+
+  ipcMain.handle(IPC.exportReview, (_event, document: DocumentModel) =>
+    exportReview(requireProjectDir(), document, resourcePaths())
+  )
+
+  ipcMain.handle(IPC.pickCorrections, async (event): Promise<PickedCorrections | null> => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return null
+    const picked = await dialog.showOpenDialog(win, {
+      title: '修正ファイルを選択',
+      // 前回修正ファイルを選んだフォルダ。なければプロジェクトの exports/
+      defaultPath: await settings.lastDir('corrections', join(requireProjectDir(), 'exports')),
+      properties: ['openFile'],
+      filters: [{ name: '修正ファイル (JSON)', extensions: ['json'] }]
+    })
+    if (picked.canceled || picked.filePaths.length === 0) return null
+    await settings.rememberDir('corrections', dirname(picked.filePaths[0])).catch(() => {})
+    return readCorrections(picked.filePaths[0])
+  })
 
   ipcMain.handle(IPC.readAsset, (_event, assetRel: string) => readAsset(requireProjectDir(), assetRel))
 

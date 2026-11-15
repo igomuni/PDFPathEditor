@@ -10,6 +10,7 @@ import type {
   Rect,
   TextObject
 } from '../../shared/model.ts'
+import type { CorrectionPlan } from './corrections.ts'
 import { planFieldCodes, type FieldCodeSummary, type ObjectPatch } from './fieldCodes.ts'
 import type { Command } from './history.ts'
 
@@ -294,4 +295,22 @@ export function assignFieldCodes(
     ]
   })
   return { command, summary }
+}
+
+/**
+ * 修正ファイルの計画(corrections.ts)を適用する。置換・追加・削除を1つの履歴にまとめる。
+ * 追加は対象ページの候補レイヤーの手前に積む。変更がなければ null。
+ */
+export function applyCorrections(document: DocumentModel, plan: CorrectionPlan): Command | null {
+  return objectsCommand('修正の取り込み', document, (layer, page) => {
+    if (page.id !== plan.pageId || layer.locked) return null
+    const additions = layer.kind === 'candidates' ? plan.additions : []
+    const affected = layer.objects.some((object) => plan.replacements.has(object.id) || plan.deletions.has(object.id))
+    if (!affected && additions.length === 0) return null
+    const kept = layer.objects
+      .filter((object) => !plan.deletions.has(object.id))
+      .map((object) => plan.replacements.get(object.id) ?? object)
+    const baseZ = kept.reduce((max, object) => Math.max(max, object.z), -1) + 1
+    return [...kept, ...additions.map((object, i) => ({ ...object, z: baseZ + i }))]
+  })
 }

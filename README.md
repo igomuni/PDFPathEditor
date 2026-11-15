@@ -60,9 +60,17 @@ pnpm start      # ビルド済みを起動
 - 出力PDFを背景と同じ解像度でラスタライズして背景と比べ、再現率・過剰率・不一致画素率を出す(1画素のずれは許容)。結果は画面と `verify.json`、差分画像は `verify-page-NNNN-diff.png`(一致=黒 / 欠落=赤 / 過剰=シアン)
 - 記入欄の範囲(線も塗りもない Path)は PDF / SVG には描かず、JSON にだけ出す
 
+### AI による確認と修正の取り込み
+- 「確認用データ」(⇧⌘E)で、プロジェクトの `exports/review/` に候補の一覧(`page-NNNN-review.json`)と、背景に候補の文字を重ねたタイル画像を書き出す。取れていないインク(青枠)と、背景に合っていない Text(橙枠)に番号を付ける
+- アプリの外で AI(Claude Code など)がこれを見て、修正ファイル(JSON)を作る。形式は `docs/corrections-format.md`
+- 「修正を取り込む…」(⇧⌘I)で修正ファイルを選ぶと、置換・追加・削除の件数と適用できない操作を表示する。適用すると 1 回の操作として反映され、Undo 1 回で戻る
+- アプリから外部の AI は呼ばない
+
 ### 最近使ったプロジェクト
 - 取り込んだ・開いたプロジェクトを 10 件まで覚え、起動直後の画面、ツールバーのプルダウン、メニュー「ファイル > 最近使ったプロジェクト」から開ける
 - 一覧はアプリの設定フォルダ(Electron の `userData`)の `recent-projects.json` に保存する。フォルダがなくなったプロジェクトは一覧に出さない
+- ファイルダイアログは、前回使ったフォルダから始まる(PDF、プロジェクト、修正ファイルを別々に覚える。保存先は同じ設定フォルダの `settings.json`)
+- 未保存の変更があるままウィンドウを閉じる・別のプロジェクトを開くときは、「保存 / 保存しない / キャンセル」を尋ねる
 - 開発中の作業用プロジェクトは `out/projects/` に置く(`out/` は Git 管理外。ビルドで消えるのは `out/main`・`out/preload`・`out/renderer` だけ)
 
 ### 構成
@@ -70,6 +78,7 @@ pnpm start      # ビルド済みを起動
 - `src/main/vectorize/` Vectorizer の実装(罫線検出)
 - `src/main/ocr/` OCR エンジンと後処理
 - `src/main/export/` PDF / SVG / JSON の出力と差分検証
+- `src/main/review/` 確認用データの書き出し(要確認箇所の洗い出し)
 - `native/vision-ocr/` macOS Vision を呼ぶ Swift ヘルパー
 - `scripts/` フォント取得スクリプト
 - `src/preload/` renderer に公開するAPI

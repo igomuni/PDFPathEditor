@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { createCanvas } from '@napi-rs/canvas'
 import type { DiffMetrics, ExportPageResult, ExportResult } from '../shared/export'
 import type { ExportRequest, WorkerReply } from '../shared/ipc'
-import type { Page } from '../shared/model'
 import { createLayout, FontBook } from './export/fonts'
 import { buildExportJson } from './export/json'
 import { exportedObjects } from './export/layout'
@@ -12,13 +11,13 @@ import { writePdf } from './export/pdf'
 import { pageToSvg } from './export/svg'
 import { compareRasters, DEFAULT_COMPARE_OPTIONS, DIFF_EXTRA, DIFF_MATCH, DIFF_MISSING, type RasterComparison } from './export/verify'
 import { renderPdfPage } from './pdf-raster'
+import { assetPath, pageLabel } from './safe-paths'
 import { canvasToGray, loadRaster } from './raster'
 
 const POINTS_PER_INCH = 72
 const PDF_FILE = 'output.pdf'
 const JSON_FILE = 'output.json'
 const REPORT_FILE = 'verify.json'
-const pageLabel = (page: Page): string => `page-${String(page.sourcePageNumber).padStart(4, '0')}`
 
 /** 差分画像。画面の差分表示と同じ色: 一致=黒 / 背景のみ(欠落)=赤 / 出力のみ(過剰)=シアン */
 async function diffPng(comparison: RasterComparison): Promise<Buffer> {
@@ -48,6 +47,8 @@ async function exportDocument(req: ExportRequest): Promise<ExportResult> {
   if (counts.every((count) => count === 0)) {
     throw new Error('確定レイヤーにオブジェクトがありません。候補を確定してから出力してください')
   }
+  // 何かを書き出す前に、ファイル名に使う値を確かめる
+  document.pages.forEach(pageLabel)
   const dir = join(projectDir, 'exports')
   await mkdir(dir, { recursive: true })
   const book = new FontBook(req.fontDirs)
@@ -75,7 +76,7 @@ async function exportDocument(req: ExportRequest): Promise<ExportResult> {
       .find((object) => object.type === 'image')
     if (!image) continue
     const dpi = (image.pixelWidth / Math.abs(image.transform[0])) * POINTS_PER_INCH
-    const background = await loadRaster(join(projectDir, image.asset), image)
+    const background = await loadRaster(assetPath(projectDir, image.asset), image)
     const rendered = await renderPdfPage(new Uint8Array(await readFile(join(dir, PDF_FILE))), index + 1, dpi)
     const comparison = compareRasters(background.raster, canvasToGray(rendered.canvas))
     const metrics: DiffMetrics = {
