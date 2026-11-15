@@ -12,6 +12,8 @@ import { dilateMask, groupInk } from '../review/uncovered'
 import type { DetectedLine } from '../vectorize/line-detector'
 import { recognize } from './engines'
 import { cleanText, fitText, type InkMetrics } from './postprocess'
+import { readGrid } from './grid-read'
+import { normalizeMissedText } from './missed'
 import { findCellPx, splitCell, type PixelRect, type RereadItem } from './reread'
 
 export interface RereadContext {
@@ -52,6 +54,20 @@ const GLYPH_GAP = 0.25
 const MIN_VERTICAL_SPACING_EM = -0.15
 // 元の候補がない場所(読み落とし)に足す候補に許す、背景に合わないインクの割合の上限
 const MAX_EXCESS_FOR_NEW = 0.4
+// 読み落としの拾い直し: まとめる距離、最小の画素数、1字とみなす大きさの上限、読ませるときの拡大率
+const MISSED_MERGE_RADIUS_PX = 3
+const MISSED_MIN_INK = 14
+const MISSED_MAX_SIZE_PX = 70
+const MISSED_SCALE = 5
+const MISSED_MIN_FONT_PX = 6
+// 読んだ字を描いたとき、元のインクのこの割合以上に重なること
+const MISSED_MIN_COVERAGE = 0.6
+// 横棒とみなす形(幅 ÷ 高さの下限、高さの上限)
+const MISSED_BAR_ASPECT = 4
+const MISSED_BAR_MAX_HEIGHT_PX = 10
+// 拾い直す字の大きさの範囲(ページの文字の大きさの中央値に対する比)
+const MISSED_MIN_SIZE_RATIO = 0.55
+const MISSED_MAX_SIZE_RATIO = 1.5
 const round = (value: number, digits: number): number => Math.round(value * 10 ** digits) / 10 ** digits
 
 interface Placed {
@@ -343,5 +359,121 @@ export async function rereadCells(context: RereadContext, drafts: readonly TextD
   // 読み直した列・行に重なっていた候補と、同じ枠の中で合っていなかった候補を外す
   const removed = new Set(done.flatMap(replacedBy))
   const kept = drafts.filter((_, i) => !removed.has(i))
-  return [...kept, ...created]
+  const reread = [...kept, ...created]
+
+  // ---- 読み落としの拾い直し: どの候補にも対応しない小さなインクのまとまり(1字、記号)を、1つずつ読む
+  const after = whiteCanvas(width, height)
+  for (const draft of reread) drawDraft(after.ctx, draft, 0, 0)
+  const covered = dilateMask(toMask(after.canvas, context.inkThreshold), width, height, COVER_RADIUS_PX)
+  const missed = new Uint8Array(width * height)
+  for (let i = 0; i < missed.length; i++) if (ink[i] && !covered[i]) missed[i] = 1
+  const spots = groupInk(missed, width, height, { mergeRadius: MISSED_MERGE_RADIUS_PX, minInk: MISSED_MIN_INK, rowTolerance: 30 }).filter(
+    (group) => group.x1 - group.x0 < MISSED_MAX_SIZE_PX && group.y1 - group.y0 < MISSED_MAX_SIZE_PX
+  )
+  if (spots.length === 0) return reread
+
+  const boxOf = (group: (typeof spots)[number]): PixelRect => ({ x0: group.x0, y0: group.y0, x1: group.x1 + 1, y1: group.y1 + 1 })
+  /** 横棒(記入欄の区切りの「ー」)。OCR は単独の横棒を読まないので、形で決める */
+  const isBar = (group: (typeof spots)[number]): boolean => {
+    const w = group.x1 - group.x0 + 1
+    const h = group.y1 - group.y0 + 1
+    return w >= MISSED_BAR_ASPECT * h && h <= MISSED_BAR_MAX_HEIGHT_PX && group.ink >= 0.7 * w * h
+  }
+  const toRead = spots.filter((group) => !isBar(group))
+  const texts = await readGrid(
+    toRead.map((group) => ({
+      width: (group.x1 - group.x0 + 1) * MISSED_SCALE,
+      height: (group.y1 - group.y0 + 1) * MISSED_SCALE,
+      draw: (ctx, left, top) => {
+        for (let y = group.y0; y <= group.y1; y++) {
+          for (let x = group.x0; x <= group.x1; x++) {
+            if (missed[y * width + x]) ctx.fillRect(left + (x - group.x0) * MISSED_SCALE, top + (y - group.y0) * MISSED_SCALE, MISSED_SCALE, MISSED_SCALE)
+          }
+        }
+      }
+    })),
+    {
+      engineId: context.engineId,
+      visionBinary: context.visionBinary,
+      tesseractLangPath: context.tesseractLangPath,
+      accept: (text) => normalizeMissedText(text) !== null,
+      debugName: 'missed'
+    }
+  )
+
+  /** spot のインクのうち、draft を描いたインクの近くにある割合(字が合っていれば 1 に近い) */
+  const coverage = (draft: TextDraft, box: PixelRect): number => {
+    const pad = 6
+    const w = box.x1 - box.x0 + pad * 2
+    const h = box.y1 - box.y0 + pad * 2
+    const local = whiteCanvas(w, h)
+    drawDraft(local.ctx, draft, box.x0 - pad, box.y0 - pad)
+    const drawn = toMask(local.canvas, context.inkThreshold)
+    let total = 0
+    let near = 0
+    for (let y = box.y0; y < box.y1; y++) {
+      for (let x = box.x0; x < box.x1; x++) {
+        if (!missed[y * width + x]) continue
+        total++
+        let hit = false
+        for (let dy = -2; dy <= 2 && !hit; dy++) {
+          for (let dx = -2; dx <= 2 && !hit; dx++) {
+            const lx = x + dx - (box.x0 - pad)
+            const ly = y + dy - (box.y0 - pad)
+            if (lx >= 0 && ly >= 0 && lx < w && ly < h && drawn[ly * w + lx]) hit = true
+          }
+        }
+        if (hit) near++
+      }
+    }
+    return total === 0 ? 0 : near / total
+  }
+
+  const base = {
+    type: 'text' as const,
+    role: 'label' as const,
+    fieldCode: null,
+    tags: [],
+    fontFamily: drafts[0]?.fontFamily ?? 'Noto Sans JP',
+    fontWeight: drafts[0]?.fontWeight ?? 400,
+    fill: '#000000',
+    align: 'left' as const,
+    outline: false
+  }
+  const picked: TextDraft[] = []
+  const sizes = reread.map((draft) => draft.fontSize).sort((p, q) => p - q)
+  const typicalSize = sizes.length > 0 ? sizes[sizes.length >> 1] : 8
+  const tryAdd = (group: (typeof spots)[number], text: string, confidence: number, byWidth: boolean): void => {
+    const box = boxOf(group)
+    const metrics = measure(text)
+    const count = [...text].length
+    // 横棒は高さが小さく、高さから大きさを決めると不安定なので、幅から決める
+    const fit = byWidth
+      ? (() => {
+          const fontSize = (box.x1 - box.x0) / (metrics.left + metrics.right)
+          return { fontSize, letterSpacing: 0, originX: box.x0 + metrics.left * fontSize, baselineY: (box.y0 + box.y1) / 2 + ((metrics.ascent - metrics.descent) * fontSize) / 2 }
+        })()
+      : fitText(box, count, metrics)
+    if (!fit || fit.fontSize < MISSED_MIN_FONT_PX) return
+    // ページのふつうの文字の大きさから外れるものは、字ではない(点線のかけら、罫線の切れ端、図形の一部など)
+    const sizePt = fit.fontSize / pxPerPt
+    if (sizePt < MISSED_MIN_SIZE_RATIO * typicalSize || sizePt > MISSED_MAX_SIZE_RATIO * typicalSize) return
+    const draft: TextDraft = {
+      ...base,
+      meta: { ocr: context.engineId, confidence: round(confidence, 2), missed: true },
+      text,
+      transform: [1, 0, 0, 1, round(m[0] * fit.originX + m[4], 3), round(m[3] * fit.baselineY + m[5], 3)],
+      fontSize: round(fit.fontSize / pxPerPt, 2),
+      letterSpacing: round(fit.letterSpacing / pxPerPt, 2)
+    }
+    // 読んだ字を描いて、元のインクと重なるときだけ採用する(字の一部を別の字として読んだものを入れないため)
+    if (evaluate(draft).excess > MAX_EXCESS_FOR_NEW || coverage(draft, box) < MISSED_MIN_COVERAGE) return
+    picked.push(draft)
+  }
+  for (const group of spots) if (isBar(group)) tryAdd(group, 'ー', 1, true)
+  toRead.forEach((group, i) => {
+    const text = normalizeMissedText(texts[i].text)
+    if (text && texts[i].confidence >= context.minConfidence) tryAdd(group, text, texts[i].confidence, false)
+  })
+  return [...reread, ...picked]
 }

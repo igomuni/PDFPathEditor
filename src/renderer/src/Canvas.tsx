@@ -32,6 +32,8 @@ export interface CanvasHandle {
   zoom100(): void
   /** rect(PDF座標)が画面の外にあれば、中央に来るよう表示位置を動かす */
   reveal(rect: Rect): void
+  /** 表示している範囲の中心(PDF座標)。まだ表示していなければ null */
+  viewCenter(): Point | null
 }
 
 export interface CanvasStatus {
@@ -380,6 +382,7 @@ export const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(
     zoomOut: () => setView((v) => v && zoomAt(v, center(), v.scale / ZOOM_STEP)),
     zoomFit: () => size && setView(fitPage(page.mediaBox, size)),
     zoom100: () => size && setView(centerPage(page.mediaBox, size, CSS_PX_PER_PT)),
+    viewCenter: () => (view && size ? toPdf(view, { x: size.width / 2, y: size.height / 2 }) : null),
     reveal: (rect) => {
       if (!size) return
       const [x0, y0, x1, y1] = rect

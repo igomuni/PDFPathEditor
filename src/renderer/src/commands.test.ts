@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { DocObject, DocumentModel, Layer, LayerKind, PathObject, TextObject } from '../../shared/model.ts'
 import {
+  addObjects,
   confirmCandidates,
+  duplicateObjects,
   deleteObjects,
   moveNode,
   moveObjects,
@@ -235,4 +237,31 @@ test('条件での入れ替え: 罫線だけ、または Text と丸数字の丸
   assert.ok(objects[2].z > objects[1].z && objects[3].z > objects[2].z)
   // 入れ替えるものがなければ null
   assert.equal(replaceObjectsWhere(document, 'layer-candidates', () => false, [], '何もしない'), null)
+})
+
+test('追加と複製: 手前に積み、複製は元と同じレイヤーにずらして置く。Undo で戻る', () => {
+  const document = makeDocument([line('rule', 0, 0, 10, 0), label('text', '給与', 5, 6)], [label('done', '確定', 1, 1)])
+  const objectsOf = (doc: DocumentModel, kind: 'candidates' | 'confirmed'): DocObject[] => doc.pages[0].layers.find((l) => l.kind === kind)!.objects
+
+  const added = addObjects(document, 'layer-candidates', [label('new', 'テキスト', 100, 200)], 'テキストを追加')!.apply(document)
+  assert.deepEqual(objectsOf(added, 'candidates').map((o) => o.id), ['rule', 'text', 'new'])
+  assert.ok(objectsOf(added, 'candidates')[2].z > objectsOf(added, 'candidates')[1].z)
+  assert.equal(addObjects(document, 'layer-candidates', [], '何もしない'), null)
+
+  let counter = 0
+  const history = new History()
+  const { command, ids } = duplicateObjects(document, ['text', 'rule', 'done'], 3, -3, () => `copy-${++counter}`)
+  const copied = history.execute(document, command!)
+  assert.deepEqual(ids, ['copy-1', 'copy-2', 'copy-3'])
+  assert.deepEqual(objectsOf(copied, 'candidates').map((o) => o.id), ['rule', 'text', 'copy-1', 'copy-2'])
+  assert.deepEqual(objectsOf(copied, 'confirmed').map((o) => o.id), ['done', 'copy-3'])
+  // 罫線は頂点を、Text は基準点をずらす。内容は元のまま
+  const ruleCopy = objectsOf(copied, 'candidates')[2] as PathObject
+  assert.deepEqual(ruleCopy.nodes.map((n) => [n.x, n.y]), [[3, -3], [13, -3]])
+  const textCopy = objectsOf(copied, 'candidates')[3] as TextObject
+  assert.equal(textCopy.text, '給与')
+  assert.deepEqual(textCopy.transform, [1, 0, 0, 1, 8, 3])
+  assert.deepEqual(history.undo(copied), document)
+  // 対象がなければ null
+  assert.equal(duplicateObjects(document, ['missing'], 1, 1).command, null)
 })

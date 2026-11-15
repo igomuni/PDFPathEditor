@@ -94,8 +94,22 @@ async function exportReview(req: ExportRequest): Promise<ReviewExportResult> {
     if (object.type !== 'path' || object.stroke === null || object.nodes.length < 2) continue
     lines.ctx.lineWidth = object.strokeWidth * pxPerPt + 4
     lines.ctx.beginPath()
-    object.nodes.forEach((node, i) => (i === 0 ? lines.ctx.moveTo(px(node.x), py(node.y)) : lines.ctx.lineTo(px(node.x), py(node.y))))
-    if (object.closed) lines.ctx.closePath()
+    // 曲線の頂点(丸数字の丸など)は曲線として描く。直線でつなぐと、丸が「取れていないインク」と誤判定される
+    const segment = (from: (typeof object.nodes)[number], to: (typeof object.nodes)[number]): void => {
+      if (!from.out && !to.in) {
+        lines.ctx.lineTo(px(to.x), py(to.y))
+        return
+      }
+      const c1 = from.out ?? [from.x, from.y]
+      const c2 = to.in ?? [to.x, to.y]
+      lines.ctx.bezierCurveTo(px(c1[0]), py(c1[1]), px(c2[0]), py(c2[1]), px(to.x), py(to.y))
+    }
+    lines.ctx.moveTo(px(object.nodes[0].x), py(object.nodes[0].y))
+    for (let i = 1; i < object.nodes.length; i++) segment(object.nodes[i - 1], object.nodes[i])
+    if (object.closed) {
+      segment(object.nodes.at(-1)!, object.nodes[0])
+      lines.ctx.closePath()
+    }
     lines.ctx.stroke()
   }
   const lineMask = toMask(lines.canvas, 200)

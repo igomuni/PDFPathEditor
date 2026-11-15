@@ -181,7 +181,10 @@ function buildMenu(): void {
         // Enter / Delete はキャンバス側のキー操作で処理する(入力欄のキーを奪わないため)
         { label: '選択した候補を確定 (Enter)', click: () => sendMenuCommand('confirm-selection') },
         item('候補を全件確定', 'Shift+CmdOrCtrl+Enter', 'confirm-all'),
-        { label: '選択を削除 (Delete)', click: () => sendMenuCommand('delete-selection') }
+        { label: '選択を削除 (Delete)', click: () => sendMenuCommand('delete-selection') },
+        { type: 'separator' },
+        item('テキストを追加', 'Shift+CmdOrCtrl+T', 'add-text'),
+        item('選択を複製', 'Alt+CmdOrCtrl+D', 'duplicate-selection')
       ]
     },
     {

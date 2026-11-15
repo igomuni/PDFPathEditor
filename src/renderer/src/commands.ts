@@ -355,3 +355,36 @@ export function setObjectsVisible(document: DocumentModel, ids: readonly string[
     })
   })
 }
+
+/** レイヤーにオブジェクトを足す(手前に積む) */
+export function addObjects(document: DocumentModel, layerId: string, objects: DocObject[], label: string): Command | null {
+  return objects.length === 0 ? null : replaceObjectsWhere(document, layerId, () => false, objects, label)
+}
+
+/**
+ * 選択したオブジェクトを複製する。複製は元と同じレイヤーの手前に、(dx, dy) pt ずらして置く。
+ * 新しいIDを返すので、呼び出し側で複製したものを選択できる。
+ */
+export function duplicateObjects(
+  document: DocumentModel,
+  ids: readonly string[],
+  dx: number,
+  dy: number,
+  newId: () => string = () => `obj-${crypto.randomUUID()}`
+): { command: Command | null; ids: string[] } {
+  const idSet = new Set(ids)
+  const created: string[] = []
+  const command = objectsCommand('オブジェクトの複製', document, (layer) => {
+    if (layer.locked) return null
+    const sources = layer.objects.filter((object) => idSet.has(object.id))
+    if (sources.length === 0) return null
+    const baseZ = layer.objects.reduce((max, object) => Math.max(max, object.z), -1) + 1
+    const copies = sources.map((object, i) => {
+      const id = newId()
+      created.push(id)
+      return { ...translateObject({ ...object, id }, dx, dy), z: baseZ + i }
+    })
+    return [...layer.objects, ...copies]
+  })
+  return { command, ids: created }
+}

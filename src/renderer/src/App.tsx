@@ -2,10 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_IMPORT_DPI, DEFAULT_IMPORT_PAGE, DEFAULT_IMPORT_PAGES, type MenuCommand, type RecentProject } from '../../shared/ipc'
 import { diffPages, sourceOf, toManifest } from '../../shared/project'
 import { Canvas, type CanvasHandle, type CanvasStatus } from './Canvas'
-import type { DocObject } from '../../shared/model'
+import { DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT } from '../../shared/fonts'
+import type { DocObject, TextObject } from '../../shared/model'
 import { CIRCLE_SOURCE, type OcrEngineId, type OcrEngineInfo } from '../../shared/ocr'
 import {
+  addObjects,
   applyCorrections,
+  duplicateObjects,
   replaceObjectsWhere,
   assignFieldCodes,
   confirmCandidates,
@@ -361,6 +364,51 @@ export function App() {
   })
   const confirmAll = withDocument((current) => store.execute(confirmCandidates(current, undefined, store.currentPage()?.id)))
   const deleteSelection = withDocument((current) => store.execute(deleteObjects(current, store.getState().selection.ids)))
+  /** 任意のテキストを、表示している範囲の中央に追加する。文字列や大きさは右のパネルで直す */
+  const addText = withDocument((current) => {
+    const target = store.currentPage()
+    const layer = target?.layers.find((candidate) => candidate.kind === 'candidates' && !candidate.locked)
+    if (!target || !layer) return
+    // 大きさは、そのページの Text の中央値に合わせる(なければ 9pt)
+    const sizes = target.layers
+      .flatMap((candidate) => candidate.objects)
+      .flatMap((object) => (object.type === 'text' ? [object.fontSize] : []))
+      .sort((a, b) => a - b)
+    const center = canvasRef.current?.viewCenter() ?? {
+      x: (target.mediaBox[0] + target.mediaBox[2]) / 2,
+      y: (target.mediaBox[1] + target.mediaBox[3]) / 2
+    }
+    const text: TextObject = {
+      id: `obj-${crypto.randomUUID()}`,
+      type: 'text',
+      role: 'label',
+      fieldCode: null,
+      transform: [1, 0, 0, 1, Math.round(center.x * 1000) / 1000, Math.round(center.y * 1000) / 1000],
+      z: 0,
+      tags: [],
+      meta: { source: 'manual' },
+      text: 'テキスト',
+      fontFamily: DEFAULT_FONT_FAMILY,
+      fontWeight: DEFAULT_FONT_WEIGHT,
+      fontSize: sizes.length > 0 ? sizes[sizes.length >> 1] : 9,
+      letterSpacing: 0,
+      fill: '#000000',
+      align: 'left',
+      outline: false
+    }
+    store.execute(addObjects(current, layer.id, [text], 'テキストを追加'))
+    store.sealHistory()
+    store.select([text.id])
+    setInfo('テキストを追加しました。右のパネルで文字列を直し、矢印キーで位置を合わせてください。')
+  })
+  /** 選択を複製する。複製は背景ラスターの10画素ぶん右下にずらして置き、複製したほうを選択する */
+  const duplicateSelection = withDocument((current) => {
+    const { command, ids } = duplicateObjects(current, store.getState().selection.ids, nudgeStep * 10, -nudgeStep * 10)
+    if (!command) return
+    store.execute(command)
+    store.sealHistory()
+    store.select(ids)
+  })
   const selectAll = withDocument(() =>
     store.select(
       (store.currentPage()?.layers ?? [])
@@ -386,6 +434,8 @@ export function App() {
       'confirm-selection': confirmSelection,
       'confirm-all': confirmAll,
       'delete-selection': deleteSelection,
+      'add-text': addText,
+      'duplicate-selection': duplicateSelection,
       'select-all': selectAll,
       'toggle-diff': () => store.setDiffMode(!store.getState().diffMode),
       'toggle-untagged': () => store.setUntaggedMode(!store.getState().untaggedMode),
@@ -629,6 +679,16 @@ export function App() {
             <button onClick={confirmSelection} disabled={selection.ids.length === 0} title="選択した候補を確定レイヤーへ移す (Enter)">
               選択を確定
             </button>
+            <button onClick={addText} title="任意のテキストを、表示している範囲の中央に追加する (⇧⌘T)">
+              テキストを追加
+            </button>
+            <button onClick={duplicateSelection} disabled={selection.ids.length === 0} title="選択したオブジェクトを複製する (⌥⌘D)">
+              複製
+            </button>
+            <button onClick={deleteSelection} disabled={selection.ids.length === 0} title="選択したオブジェクトを削除する (Delete)">
+              削除
+            </button>
+            <span className="separator" />
             <button onClick={confirmAll} disabled={!candidates || candidates.objects.length === 0} title="候補を全件確定する (⇧⌘Enter)">
               全件確定
             </button>

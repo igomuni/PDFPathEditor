@@ -102,6 +102,8 @@ export type MenuCommand =
   | 'confirm-selection'
   | 'confirm-all'
   | 'delete-selection'
+  | 'add-text'
+  | 'duplicate-selection'
   | 'select-all'
   | 'toggle-diff'
   | 'toggle-untagged'

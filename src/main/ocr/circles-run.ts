@@ -222,7 +222,15 @@ export async function detectCircled(context: RereadContext, drafts: readonly Tex
     const spacing = Math.max(0, [...draft.text].length - 1) * draft.letterSpacing * pxPerPt
     const x = (draft.transform[4] - m[4]) / m[0] + ((metrics.right - metrics.left) * size + spacing) / 2
     const y = (draft.transform[5] - m[5]) / m[3] - ((metrics.ascent - metrics.descent) * size) / 2
-    return found.some((ring) => Math.hypot(x - ring.cx, y - ring.cy) <= ring.radius)
+    if (found.some((ring) => Math.hypot(x - ring.cx, y - ring.cy) <= ring.radius)) return true
+    // 丸数字を「・」や「〜」でつないだ並び(⑰・⑱ など)を1行として読んだ候補は、中心が輪の間に来る。
+    // 候補の幅の半分以上が輪に重なっていれば、輪を読み直した結果と入れ替える(つなぎの記号は、読み落としとして拾い直す)
+    const x0 = (draft.transform[4] - m[4]) / m[0] - metrics.left * size
+    const x1 = x0 + (metrics.left + metrics.right) * size + spacing
+    const covered = found
+      .filter((ring) => ring.box.y0 < y && y < ring.box.y1)
+      .reduce((sum, ring) => sum + Math.max(0, Math.min(x1, ring.box.x1) - Math.max(x0, ring.box.x0)), 0)
+    return x1 > x0 && covered >= 0.5 * (x1 - x0)
   }
   return { drafts: [...drafts.filter((draft) => !inRing(draft)), ...created], paths, ringMask }
 }
