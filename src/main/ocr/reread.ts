@@ -92,8 +92,10 @@ export function decideMode(columns: Band[], rows: Band[]): ReadMode | null {
   const inkWidth = columns.at(-1)!.end - columns[0].start
   const inkHeight = rows.at(-1)!.end - rows[0].start
   if (columns.length === 1) {
-    // 1列に2字以上が縦に並ぶ
-    return inkWidth >= MIN_GLYPH_PX && inkHeight >= MIN_COLUMN_ASPECT * inkWidth ? 'vertical' : null
+    // 縦に長ければ、1列に2字以上が縦に並ぶ縦書き。そうでなければ、字がつながって見える横書きの複数行
+    // (「住宅 / 借入金」のような2段組。1行の大きな文字として読み違えやすい)
+    if (inkWidth < MIN_GLYPH_PX) return null
+    return inkHeight >= MIN_COLUMN_ASPECT * inkWidth ? 'vertical' : 'horizontal'
   }
   // 列も行も2つ以上: 少ないほうが「行(列)」、多いほうがその中の「字」
   if (rows.length < columns.length) return 'horizontal'

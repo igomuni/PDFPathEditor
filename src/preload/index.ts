@@ -3,8 +3,8 @@ import { IPC, type AddedPages, type DeletedPage, type DetectTarget, type SavePay
 import type { PickedCorrections, ReviewExportResult } from '../shared/corrections'
 import type { ExportResult } from '../shared/export'
 import type { FontFace } from '../shared/fonts'
-import type { DocumentModel, PathObject, TextObject } from '../shared/model'
-import type { OcrEngineId, OcrEngineInfo } from '../shared/ocr'
+import type { DocumentModel, PathObject } from '../shared/model'
+import type { OcrEngineId, OcrEngineInfo, TextDetection } from '../shared/ocr'
 
 const api = {
   importPdf: (options: ImportOptions): Promise<OpenedProject | null> =>
@@ -45,7 +45,7 @@ const api = {
   readAsset: (assetRel: string): Promise<Uint8Array> => ipcRenderer.invoke(IPC.readAsset, assetRel),
   detectCandidates: (target: DetectTarget): Promise<PathObject[]> =>
     ipcRenderer.invoke(IPC.detectCandidates, target),
-  detectText: (target: DetectTarget, engineId: OcrEngineId): Promise<TextObject[]> =>
+  detectText: (target: DetectTarget, engineId: OcrEngineId): Promise<TextDetection> =>
     ipcRenderer.invoke(IPC.detectText, target, engineId),
   listOcrEngines: (): Promise<OcrEngineInfo[]> => ipcRenderer.invoke(IPC.listOcrEngines),
   listFonts: (): Promise<FontFace[]> => ipcRenderer.invoke(IPC.listFonts),

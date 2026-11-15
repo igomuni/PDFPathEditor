@@ -28,11 +28,10 @@ import {
   type Page,
   type PathObject,
   type ProjectManifest,
-  type SourceInfo,
-  type TextObject
+  type SourceInfo
 } from '../shared/model'
 import { fromPageFile, isSafeId, migrateV1, newPageId, newSourceId, pageFileName, parsePageSpec, toManifest, toPageFile } from '../shared/project'
-import type { OcrEngineId, OcrEngineInfo, TextDraft } from '../shared/ocr'
+import type { OcrEngineId, OcrEngineInfo, TextDetection, TextDetectionDrafts } from '../shared/ocr'
 import type { PathDraft } from '../shared/vectorizer'
 
 const DOCUMENT_FILE = 'document.json'
@@ -467,7 +466,7 @@ export async function detectText(
   target: DetectTarget,
   engineId: OcrEngineId,
   resources: ResourcePaths
-): Promise<TextObject[]> {
+): Promise<TextDetection> {
   const engine = (await listOcrEngines(resources)).find((info) => info.id === engineId)
   if (!engine) throw new Error(`未登録の OCR エンジンです: ${engineId}`)
   if (!engine.available) throw new Error(`${engine.label} は使えません: ${engine.reason}`)
@@ -477,7 +476,7 @@ export async function detectText(
     throw new Error(`フォント ${font.file} がありません。\`pnpm fonts\` で取得してください`)
   }
   const languageData = createRequire(__filename).resolve('@tesseract.js-data/jpn/package.json')
-  const drafts = await runWorker<OcrRequest, TextDraft[]>('ocr-worker.js', 'OCR', {
+  const drafts = await runWorker<OcrRequest, TextDetectionDrafts>('ocr-worker.js', 'OCR', {
     engineId,
     pngPath: resolveAsset(projectDir, target.asset),
     pixelWidth: target.pixelWidth,
@@ -489,7 +488,10 @@ export async function detectText(
     visionBinary: resources.visionBinary,
     tesseractLangPath: join(dirname(languageData), '4.0.0_best_int')
   })
-  return drafts.map((draft, index) => ({ id: `obj-${randomUUID()}`, ...draft, z: index }))
+  return {
+    texts: drafts.texts.map((draft, index) => ({ id: `obj-${randomUUID()}`, ...draft, z: index })),
+    paths: drafts.paths.map((draft, index) => ({ id: `obj-${randomUUID()}`, ...draft, z: index }))
+  }
 }
 
 /** 出力先。1ページだけならそのページのフォルダ、複数ページなら exports/all/ */

@@ -7,6 +7,7 @@ import {
   moveNode,
   moveObjects,
   replaceObjectsOfType,
+  replaceObjectsWhere,
   updateTexts
 } from './commands.ts'
 import { History } from './history.ts'
@@ -211,4 +212,27 @@ test('種類を指定した入れ替えは、ほかの種類の候補を残す',
     ['n1', 1],
     ['n2', 2]
   ])
+})
+
+test('条件での入れ替え: 罫線だけ、または Text と丸数字の丸だけを入れ替える', () => {
+  const circle: PathObject = { ...line('circle', 0, 0, 1, 1), role: 'label', meta: { source: 'ocr-circle' } }
+  const cell: PathObject = { ...line('cell', 0, 0, 1, 1), role: 'inputCell' }
+  const document = makeDocument([line('rule', 0, 0, 10, 0), circle, cell, label('text', '62', 0, 0)])
+  const ids = (doc: DocumentModel): string[] => doc.pages[0].layers.find((l) => l.kind === 'candidates')!.objects.map((o) => o.id)
+
+  // 罫線の再検出: 記入欄と丸は残る
+  const isRule = (object: DocObject): boolean => object.type === 'path' && object.role === 'frame' && object.meta.source !== 'ocr-circle'
+  const lines = replaceObjectsWhere(document, 'layer-candidates', isRule, [line('rule2', 0, 5, 10, 5)], '罫線を検出')!.apply(document)
+  assert.deepEqual(ids(lines), ['circle', 'cell', 'text', 'rule2'])
+
+  // 文字の再検出: Text と丸が入れ替わり、罫線と記入欄は残る
+  const isDetected = (object: DocObject): boolean => object.type === 'text' || object.meta.source === 'ocr-circle'
+  const newCircle: PathObject = { ...circle, id: 'circle2' }
+  const texts = replaceObjectsWhere(document, 'layer-candidates', isDetected, [label('text2', '62', 0, 0), newCircle], '文字を検出')!.apply(document)
+  assert.deepEqual(ids(texts), ['rule', 'cell', 'text2', 'circle2'])
+  // 追加したものは手前に積む
+  const objects = texts.pages[0].layers.find((l) => l.kind === 'candidates')!.objects
+  assert.ok(objects[2].z > objects[1].z && objects[3].z > objects[2].z)
+  // 入れ替えるものがなければ null
+  assert.equal(replaceObjectsWhere(document, 'layer-candidates', () => false, [], '何もしない'), null)
 })

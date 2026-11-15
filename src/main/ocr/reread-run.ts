@@ -30,6 +30,8 @@ export interface RereadContext {
   measure(text: string): InkMetrics
   visionBinary: string
   tesseractLangPath: string
+  /** 文字のインクとして扱わない画素(丸囲みの輪など) */
+  excludeInk?: Uint8Array
 }
 
 // 候補のインクのうち、背景に対応するインクがない割合がこれを超えたら「合っていない」とみなす(確認用データと同じ基準)
@@ -106,6 +108,8 @@ export async function rereadCells(context: RereadContext, drafts: readonly TextD
     }
   }
 
+  if (context.excludeInk) for (let i = 0; i < ink.length; i++) if (context.excludeInk[i]) ink[i] = 0
+
   // 候補を、画面と同じフォント・サイズ・字間で描く(縦書きにまとめたものは、ここより後で作るので来ない)
   const drawDraft = (ctx: SKRSContext2D, draft: TextDraft, offsetX: number, offsetY: number): void => {
     ctx.font = `${draft.fontSize * pxPerPt}px "${context.fontAlias}"`
@@ -170,7 +174,9 @@ export async function rereadCells(context: RereadContext, drafts: readonly TextD
     info.misfit = info.excess > MISFIT_EXCESS
     return info
   }
-  const infos = drafts.map(evaluate)
+  // 丸囲みの文字として作った候補は、輪から決めた位置と大きさなので、読み直しのきっかけにも置き換えの対象にもしない
+  const isFixed = (draft: TextDraft): boolean => draft.meta.circled !== undefined
+  const infos = drafts.map((draft) => (isFixed(draft) ? { ...evaluate(draft), misfit: false } : evaluate(draft)))
 
   // 読み直すきっかけ: 合っていない候補の中心と、読み落としたインクのまとまりの中心
   const rest = new Uint8Array(width * height)
@@ -262,7 +268,9 @@ export async function rereadCells(context: RereadContext, drafts: readonly TextD
   /** この列・行の読み直しで置き換わる、元の候補 */
   const replacedBy = ({ item, cell }: Placed): number[] =>
     infos.flatMap((info, i) =>
-      contains(item.box, info.centerX, info.centerY, 3) || (info.misfit && contains(cell, info.centerX, info.centerY)) ? [i] : []
+      !isFixed(drafts[i]) && (contains(item.box, info.centerX, info.centerY, 3) || (info.misfit && contains(cell, info.centerX, info.centerY)))
+        ? [i]
+        : []
     )
   /** 読み直した候補を、元の候補より背景に合うときだけ採用する */
   const accept = (entry: Placed, draft: TextDraft): void => {

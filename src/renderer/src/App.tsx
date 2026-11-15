@@ -2,14 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_IMPORT_DPI, DEFAULT_IMPORT_PAGE, DEFAULT_IMPORT_PAGES, type MenuCommand, type RecentProject } from '../../shared/ipc'
 import { diffPages, sourceOf, toManifest } from '../../shared/project'
 import { Canvas, type CanvasHandle, type CanvasStatus } from './Canvas'
-import type { OcrEngineId, OcrEngineInfo } from '../../shared/ocr'
+import type { DocObject } from '../../shared/model'
+import { CIRCLE_SOURCE, type OcrEngineId, type OcrEngineInfo } from '../../shared/ocr'
 import {
   applyCorrections,
+  replaceObjectsWhere,
   assignFieldCodes,
   confirmCandidates,
   deleteObjects,
   lineAxis,
-  replaceObjectsOfType,
   setLayerOpacity,
   setLayerVisible
 } from './commands'
@@ -309,7 +310,9 @@ export function App() {
           pixelHeight: image.pixelHeight
         })
         const latest = store.getState().document
-        if (latest) store.execute(replaceObjectsOfType(latest, target.id, 'path', paths, '罫線を検出'))
+        // 罫線だけを入れ替える(記入欄と、丸数字の丸は残す)
+        const isRule = (object: DocObject): boolean => object.type === 'path' && object.role === 'frame' && object.meta.source !== CIRCLE_SOURCE
+        if (latest) store.execute(replaceObjectsWhere(latest, target.id, isRule, paths, '罫線を検出'))
       }),
     [run]
   )
@@ -324,12 +327,14 @@ export function App() {
           ?.objects.find((object) => object.type === 'image')
         const target = current?.layers.find((layer) => layer.kind === 'candidates')
         if (!image || !target) return
-        const texts = await window.api.detectText(
+        const detected = await window.api.detectText(
           { asset: image.asset, transform: image.transform, pixelWidth: image.pixelWidth, pixelHeight: image.pixelHeight },
           ocrEngineId
         )
         const latest = store.getState().document
-        if (latest) store.execute(replaceObjectsOfType(latest, target.id, 'text', texts, '文字を検出'))
+        // Text と、前回の文字検出で作った丸数字の丸を入れ替える
+        const isDetected = (object: DocObject): boolean => object.type === 'text' || object.meta.source === CIRCLE_SOURCE
+        if (latest) store.execute(replaceObjectsWhere(latest, target.id, isDetected, [...detected.texts, ...detected.paths], '文字を検出'))
       }),
     [run, ocrEngineId]
   )

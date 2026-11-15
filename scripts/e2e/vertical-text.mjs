@@ -48,9 +48,31 @@ try {
   const reread = textsOf(page).filter((text) => text.meta.reread)
   console.log('     読み直した Text:', reread.map((text) => `${text.text}${text.writingMode === 'vertical' ? '(縦)' : ''}`).join(' / '))
   check('枠の読み直しで、縦書きと横書きの候補ができる', reread.some((text) => text.meta.reread === 'vertical' && text.writingMode === 'vertical') && reread.some((text) => text.meta.reread === 'horizontal'), `${reread.length} 件`)
+  // 丸囲みの文字: ①〜㊿ とカタカナは1つの Text、51 以上は数字の Text と丸の Path
+  const objects = page.layers.flatMap((layer) => layer.objects)
+  const circledTexts = objects.filter((object) => object.type === 'text' && object.meta.circled !== undefined)
+  const circles = objects.filter((object) => object.type === 'path' && object.meta.source === 'ocr-circle')
+  const single = circledTexts.filter((text) => /^[\u2460-\u2473\u3251-\u325f\u32b1-\u32bf\u32d0-\u32fe]$/u.test(text.text))
+  const large = circledTexts.filter((text) => /^\d\d$/.test(text.text))
+  console.log('     丸囲み:', circledTexts.map((text) => text.text).join(' '))
+  check('丸囲みの文字を Text として検出する', single.length >= 20, `1文字 ${single.length} 件`)
+  check(
+    '51 以上の丸数字は、数字の Text と丸の Path になる',
+    large.length > 0 && large.length === circles.length && large.every((text) => Number(text.text) >= 51) && circles.every((path) => path.closed && path.nodes.length === 4 && path.nodes[0].out),
+    `数字 ${large.length} 件 / 丸 ${circles.length} 件`
+  )
   const drawn = await app.evaluate(`document.querySelectorAll('svg text tspan').length`)
   check('縦書きの Text が1字ずつ描かれる', drawn === vertical.reduce((sum, text) => sum + [...text.text].length, 0), `tspan ${drawn} 個`)
   if (shots) await app.screenshot(join(shots, 'vertical-detected.png'))
+
+  // 罫線を検出し直しても丸は残り、文字を検出し直しても丸は増えない
+  const circlesOnCanvas = () => app.evaluate(`document.querySelectorAll('svg [data-layer-kind=candidates] path[d*="C"]').length`)
+  const circleCount = await circlesOnCanvas()
+  await app.click('罫線を検出')
+  await app.waitIdle()
+  check('罫線を検出し直しても、丸数字の丸は残る', circleCount > 0 && (await circlesOnCanvas()) === circleCount, `${circleCount} → ${await circlesOnCanvas()}`)
+  await app.evaluate(`document.querySelector('button[title^="元に戻す"]').click()`)
+  await app.sleep(300)
 
   // 2. パネルで横書きの Text を縦書きに切り替え、Undo で戻す
   const horizontal = textsOf(page).find((text) => text.writingMode !== 'vertical' && [...text.text].length >= 3)

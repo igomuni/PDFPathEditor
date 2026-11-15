@@ -1,5 +1,5 @@
 // OCR の差し替え口。OCR は候補を出すだけで、文字内容は人が確定する。
-import type { TextObject } from './model'
+import type { PathObject, TextObject } from './model'
 
 export type OcrEngineId = 'vision' | 'tesseract'
 
@@ -30,3 +30,18 @@ export interface OcrLine {
 
 /** 安定IDとZ順は呼び出し側で振る */
 export type TextDraft = Omit<TextObject, 'id' | 'z'>
+
+/** 丸の Path に付ける印(meta.source)。文字検出をやり直すとき、これの付いた Path を入れ替える */
+export const CIRCLE_SOURCE = 'ocr-circle'
+
+/** 文字検出の結果(ワーカーから)。paths は、Unicode にない丸数字の丸 */
+export interface TextDetectionDrafts {
+  texts: TextDraft[]
+  paths: Omit<PathObject, 'id' | 'z'>[]
+}
+
+/** 文字検出の結果(画面へ) */
+export interface TextDetection {
+  texts: TextObject[]
+  paths: PathObject[]
+}

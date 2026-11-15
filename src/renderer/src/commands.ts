@@ -119,6 +119,26 @@ export function replaceObjectsOfType(
   })
 }
 
+/**
+ * レイヤーの中の、remove に当たるオブジェクトを objects と入れ替える(候補の再抽出)。
+ * 罫線を検出し直しても文字の候補は残る、文字を検出し直すと丸数字の丸も入れ替わる、という動きにする。
+ */
+export function replaceObjectsWhere(
+  document: DocumentModel,
+  layerId: string,
+  remove: (object: DocObject) => boolean,
+  objects: DocObject[],
+  label: string
+): Command | null {
+  return objectsCommand(label, document, (layer) => {
+    if (layer.id !== layerId) return null
+    const kept = layer.objects.filter((object) => !remove(object))
+    if (kept.length === layer.objects.length && objects.length === 0) return null
+    const baseZ = kept.reduce((max, object) => Math.max(max, object.z), -1) + 1
+    return [...kept, ...objects.map((object, i) => ({ ...object, z: baseZ + i }))]
+  })
+}
+
 export type TextPatch = Partial<
   Pick<TextObject, 'text' | 'fontFamily' | 'fontWeight' | 'fontSize' | 'letterSpacing' | 'fill' | 'align' | 'outline' | 'writingMode'>
 >

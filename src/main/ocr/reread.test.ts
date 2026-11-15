@@ -61,8 +61,10 @@ test('decideMode: 1列に縦に並べば縦書き、行が少なければ横書�
   assert.equal(decideMode([band(0, 20)], [band(0, 20), band(25, 45), band(50, 70)]), 'vertical')
   // 1行だけは対象外
   assert.equal(decideMode([band(0, 20), band(25, 45)], [band(0, 20)]), null)
-  // 1列でも、縦に長くなければ対象外(上下に分かれた1字など)
-  assert.equal(decideMode([band(0, 20)], [band(0, 9), band(11, 20)]), null)
+  // 1列でも、縦に長くなければ横書きの複数行(字がつながって1列に見える2段組)
+  assert.equal(decideMode([band(0, 20)], [band(0, 9), band(11, 20)]), 'horizontal')
+  // 細すぎるものは対象外
+  assert.equal(decideMode([band(0, 5)], [band(0, 9), band(11, 20)]), null)
   // 2行 × 3字 → 横書きの2行
   assert.equal(decideMode([band(0, 10), band(12, 22), band(24, 34)], [band(0, 10), band(14, 24)]), 'horizontal')
   // 2列 × 3字 → 縦書きの2列
