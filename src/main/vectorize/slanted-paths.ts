@@ -50,3 +50,47 @@ export function slantedToDrafts(shapes: SlantedShapes, pixelToPdf: Matrix): Path
   })
   return [...diagonals, ...arcs]
 }
+
+/**
+ * 角丸の枠に図形の印を付ける。角の円弧(corner-detect)と、その端につながる罫線を同じグループにする。
+ * 罫線を介してつながる円弧どうしは、同じ枠とみなす。lines と slanted の順は変えない。
+ */
+export function tagRoundRects(lines: readonly PathDraft[], slanted: readonly PathDraft[]): { lines: PathDraft[]; slanted: PathDraft[] } {
+  const arcs = slanted.map((draft, index) => ({ draft, index })).filter(({ draft }) => draft.meta.source === 'corner-detect')
+  if (arcs.length === 0) return { lines: [...lines], slanted: [...slanted] }
+  // 円弧ごとに、端につながる罫線を探す。罫線は円弧の始まりを少し拾っていることがあるので、線に沿った向きには半径ぶんの余裕を見る
+  const touching = arcs.map(({ draft }) => {
+    const [from, to] = draft.nodes
+    const r = Math.max(Math.abs(to.x - from.x), Math.abs(to.y - from.y))
+    const reach = r * 0.6 + 2
+    return lines.flatMap((line, index) => {
+      if (line.closed || line.nodes.length !== 2 || line.dash) return []
+      const [p, q] = line.nodes
+      const horizontal = Math.abs(p.y - q.y) < 0.01
+      const vertical = Math.abs(p.x - q.x) < 0.01
+      const meets = (end: { x: number; y: number }): boolean =>
+        horizontal
+          ? Math.abs(p.y - end.y) <= 0.6 && Math.min(Math.abs(p.x - end.x), Math.abs(q.x - end.x)) <= reach
+          : vertical
+            ? Math.abs(p.x - end.x) <= 0.6 && Math.min(Math.abs(p.y - end.y), Math.abs(q.y - end.y)) <= reach
+            : false
+      return (horizontal && meets(from)) || (vertical && meets(to)) ? [index] : []
+    })
+  })
+  // 罫線を共有する円弧をまとめる
+  const parent = arcs.map((_, i) => i)
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])))
+  for (let i = 0; i < arcs.length; i++) {
+    for (let j = i + 1; j < arcs.length; j++) {
+      if (touching[i].some((line) => touching[j].includes(line))) parent[find(i)] = find(j)
+    }
+  }
+  const tag = (i: number): { kind: 'roundRect'; group: string } => ({ kind: 'roundRect', group: `roundrect-${find(i)}` })
+  const taggedLines = [...lines]
+  const taggedSlanted = [...slanted]
+  arcs.forEach(({ draft, index }, i) => {
+    taggedSlanted[index] = { ...draft, meta: { ...draft.meta, shape: tag(i) } }
+    for (const line of touching[i]) taggedLines[line] = { ...taggedLines[line], meta: { ...taggedLines[line].meta, shape: tag(i) } }
+  })
+  return { lines: taggedLines, slanted: taggedSlanted }
+}

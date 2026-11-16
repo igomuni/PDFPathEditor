@@ -9,6 +9,8 @@ test('拾い直した字: 1〜2字のかな・漢字・数字・記号だけを�
   assert.equal(normalizeMissedText('~'), '〜')
   assert.equal(normalizeMissedText('x'), '×')
   assert.equal(normalizeMissedText('('), '（')
+  assert.equal(normalizeMissedText('{'), '（')
+  assert.equal(normalizeMissedText('｝'), '）')
   assert.equal(normalizeMissedText('.'), '・')
   assert.equal(normalizeMissedText('+'), '+')
   assert.equal(normalizeMissedText('17'), '17')

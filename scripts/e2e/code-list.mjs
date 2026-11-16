@@ -30,18 +30,18 @@ try {
   const tab = (label) => app.evaluate(`[...document.querySelectorAll('.sidebar .tabs button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(label)})).click()`)
   const rows = () => app.evaluate(`document.querySelectorAll('.code-list li').length`)
 
-  check('左パネルに3つのタブがあり、最初はオブジェクトの一覧', /^ページ \d+ \| オブジェクト\* \| 項目コード \d+$/.test(await tabs()) && (await shownBodies()) === 'false,true,false', await tabs())
+  check('左パネルに4つのタブがあり、最初はオブジェクトの一覧', /^ページ \d+ \| オブジェクト\* \| コード \d+ \| Shape \d+$/.test(await tabs()) && (await shownBodies()) === 'false,true,false,false', await tabs())
   check('右パネルに項目コードの一覧がない', !(await app.evaluate(`!!document.querySelector('.panel .code-list')`)))
 
   await tab('ページ')
   await app.sleep(200)
-  check('ページのタブに切り替わる', (await shownBodies()) === 'true,false,false' && (await app.evaluate(`document.querySelectorAll('.page-tree .page-row').length`)) > 0)
+  check('ページのタブに切り替わる', (await shownBodies()) === 'true,false,false,false' && (await app.evaluate(`document.querySelectorAll('.page-tree .page-row').length`)) > 0)
   if (shots) await app.screenshot(join(shots, 'tab-pages.png'))
 
-  await tab('項目コード')
+  await tab('コード')
   await app.sleep(200)
-  const total = Number((await tabs()).match(/項目コード (\d+)\*/)?.[1] ?? -1)
-  check('項目コードのタブに、コードの数だけ行が出る', (await shownBodies()) === 'false,false,true' && total > 0 && (await rows()) === total, `${total} 件`)
+  const total = Number((await tabs()).match(/コード (\d+)\*/)?.[1] ?? -1)
+  check('項目コードのタブに、コードの数だけ行が出る', (await shownBodies()) === 'false,false,true,false' && total > 0 && (await rows()) === total, `${total} 件`)
 
   // 行を押すと、そのコードのオブジェクトが選択される
   const picked = await app.evaluate(`(() => { const b = document.querySelectorAll('.code-list li button')[4]; b.click(); return b.querySelector('.code').textContent + ':' + b.querySelector('.count').textContent })()`)

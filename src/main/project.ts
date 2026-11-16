@@ -449,7 +449,14 @@ export async function detectCandidates(
     pixelHeight: target.pixelHeight,
     imageTransform: target.transform
   })
-  return drafts.map((draft, index) => ({ id: `obj-${randomUUID()}`, ...draft, z: index }))
+  const run = shortId()
+  return drafts.map((draft, index) => ({ id: `obj-${randomUUID()}`, ...draft, meta: uniqueShape(draft.meta, run), z: index }))
+}
+
+/** 図形のグループ番号(meta.shape.group)に、検出の回ごとの番号を足す(前に検出した図形と混ざらないように) */
+function uniqueShape(meta: Record<string, unknown>, run: string): Record<string, unknown> {
+  const shape = meta.shape as { kind?: unknown; group?: unknown } | undefined
+  return shape && typeof shape.group === 'string' ? { ...meta, shape: { ...shape, group: `${shape.group}-${run}` } } : meta
 }
 
 /** 背景ラスターの一部を切り出して Image にする。PNG は背景と同じフォルダ(assets/<ページ>/)に書く */
@@ -535,9 +542,10 @@ export async function detectText(
     visionBinary: resources.visionBinary,
     tesseractLangPath: join(dirname(languageData), '4.0.0_best_int')
   })
+  const run = shortId()
   return {
-    texts: drafts.texts.map((draft, index) => ({ id: `obj-${randomUUID()}`, ...draft, z: index })),
-    paths: drafts.paths.map((draft, index) => ({ id: `obj-${randomUUID()}`, ...draft, z: index }))
+    texts: drafts.texts.map((draft, index) => ({ id: `obj-${randomUUID()}`, ...draft, meta: uniqueShape(draft.meta, run), z: index })),
+    paths: drafts.paths.map((draft, index) => ({ id: `obj-${randomUUID()}`, ...draft, meta: uniqueShape(draft.meta, run), z: index }))
   }
 }
 

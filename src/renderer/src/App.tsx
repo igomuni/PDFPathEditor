@@ -34,6 +34,8 @@ import { ObjectList } from './ObjectListPanel'
 import { PageTree } from './PageTreePanel'
 import { isVisible } from './objectList'
 import { CodeListPanel } from './CodeListPanel'
+import { ShapePanel } from './ShapePanel'
+import { collectShapes, createShape, type ShapeKind } from '../../shared/shapes'
 import { collectCodes } from './codes'
 import { ROLE_LABELS, TagSection } from './TagPanel'
 import { TextPanel } from './TextPanel'
@@ -63,7 +65,7 @@ export function App() {
   /** 左パネルで開いている一覧 */
   /** 範囲を画像として切り出すモード */
   const [cropMode, setCropMode] = useState(false)
-  const [leftTab, setLeftTab] = useState<'pages' | 'objects' | 'codes'>('objects')
+  const [leftTab, setLeftTab] = useState<'pages' | 'objects' | 'codes' | 'shapes'>('objects')
 
   useEffect(() => {
     void window.api.listOcrEngines().then((engines) => {
@@ -114,6 +116,7 @@ export function App() {
   }, [page, selection.ids])
   const selectedTexts = useMemo(() => selectedObjects.filter((object) => object.type === 'text'), [selectedObjects])
   const codeEntries = useMemo(() => (page ? collectCodes(page) : []), [page])
+  const shapeCount = useMemo(() => (page ? collectShapes(page, objectBounds).length : 0), [page])
   const codeNames = useMemo(() => codeEntries.map((entry) => entry.code), [codeEntries])
   // 選択中のオブジェクトが持つ項目コード。同じコードのオブジェクトをキャンバスで強調する
   const activeCodes = useMemo(
@@ -501,6 +504,33 @@ export function App() {
     setInfo('テキストを追加しました。ダブルクリックで文字列を直し、ドラッグか矢印キーで位置を合わせてください。')
   }
   const addText = (): void => addTextAt()
+  /** 図形を、表示している範囲の中央に追加する。大きさは、そのページの文字の大きさから決める */
+  const addShape = (kind: ShapeKind): void => {
+    const current = store.getState().document
+    const target = store.currentPage()
+    const layer = target?.layers.find((candidate) => candidate.kind === 'candidates' && !candidate.locked)
+    if (!current || !target || !layer) return
+    const sizes = target.layers
+      .flatMap((candidate) => candidate.objects)
+      .flatMap((object) => (object.type === 'text' ? [object.fontSize] : []))
+      .sort((a, b) => a - b)
+    const center = canvasRef.current?.viewCenter() ?? {
+      x: (target.mediaBox[0] + target.mediaBox[2]) / 2,
+      y: (target.mediaBox[1] + target.mediaBox[3]) / 2
+    }
+    const objects = createShape(kind, {
+      cx: center.x,
+      cy: center.y,
+      size: sizes.length > 0 ? sizes[sizes.length >> 1] : 9,
+      newId: () => `obj-${crypto.randomUUID()}`,
+      fontFamily: DEFAULT_FONT_FAMILY,
+      fontWeight: DEFAULT_FONT_WEIGHT
+    })
+    store.sealHistory()
+    store.execute(addObjects(current, layer.id, objects, '図形を追加'))
+    store.sealHistory()
+    store.select(objects.map((object) => object.id))
+  }
 
   /** 今のページで選択している、編集できる Text */
   const currentTexts = (): TextObject[] => {
@@ -948,7 +978,8 @@ export function App() {
                 [
                   ['pages', `ページ ${document?.pages.length ?? 0}`],
                   ['objects', 'オブジェクト'],
-                  ['codes', `項目コード ${codeEntries.length}`]
+                  ['codes', `コード ${codeEntries.length}`],
+                  ['shapes', `Shape ${shapeCount}`]
                 ] as const
               ).map(([id, label]) => (
                 <button
@@ -983,6 +1014,9 @@ export function App() {
             </div>
             <div className="tab-body" hidden={leftTab !== 'codes'}>
               <CodeListPanel page={page} entries={codeEntries} activeCodes={activeCodes} untaggedMode={untaggedMode} onReveal={revealObjects} />
+            </div>
+            <div className="tab-body" hidden={leftTab !== 'shapes'}>
+              <ShapePanel page={page} selection={selection} onAdd={addShape} onReveal={revealObjects} />
             </div>
           </aside>
         )}

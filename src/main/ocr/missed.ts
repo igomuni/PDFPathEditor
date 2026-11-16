@@ -11,7 +11,8 @@ export function normalizeMissedText(raw: string): string | null {
   const text = raw.replace(/\s+/g, '')
   const count = [...text].length
   if (count < 1 || count > 2) return null
-  const map: Record<string, string> = { '~': '〜', '∼': '〜', '～': '〜', x: '×', X: '×', '+': '+', '*': '※', '･': '・', '.': '・', '·': '・', '(': '（', ')': '）', '{': '｛', '}': '｝' }
+  const map: Record<string, string> = { '~': '〜', '∼': '〜', '～': '〜', x: '×', X: '×', '+': '+', '*': '※', '･': '・', '.': '・', '·': '・', '(': '（', ')': '）', '{': '（', '}': '）', '｛': '（', '｝': '）' }
+  // 波括弧は、細い丸括弧の読み違いなので丸括弧にする(本物の波括弧は図形として扱う。§3-60)
   const normalized = [...text].map((char) => map[char] ?? char).join('')
   // かな・漢字・数字と、様式に出てくる記号だけを受け付ける。英字や「|」「■」「'」などは、罫線や図形のかけらを読んだものが多い
   return MISSED_ALLOWED.test(normalized) ? normalized : null

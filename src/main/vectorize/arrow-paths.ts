@@ -16,7 +16,7 @@ export function arrowsToDrafts(arrows: readonly Arrow[], pixelToPdf: Matrix): Pa
   return arrows.flatMap((arrow, index): PathDraft[] => [
     {
       ...base,
-      meta: { source: ARROW_SOURCE, part: 'shaft', arrow: index },
+      meta: { source: ARROW_SOURCE, part: 'shaft', arrow: index, shape: { kind: 'arrow', group: `arrow-${index}` } },
       nodes: arrow.shaft.map(toPdf),
       closed: false,
       fill: null,
@@ -26,7 +26,7 @@ export function arrowsToDrafts(arrows: readonly Arrow[], pixelToPdf: Matrix): Pa
     },
     {
       ...base,
-      meta: { source: ARROW_SOURCE, part: 'head', arrow: index },
+      meta: { source: ARROW_SOURCE, part: 'head', arrow: index, shape: { kind: 'arrow', group: `arrow-${index}` } },
       nodes: arrow.head.map(toPdf),
       closed: true,
       fill: '#000000',

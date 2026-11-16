@@ -171,9 +171,11 @@ export async function detectCircled(context: RereadContext, drafts: readonly Tex
       const fit = fitText(inner, content.digits.length, measure(content.digits))
       if (!fit) return
       const [x, y] = toPdf(fit.originX, fit.baselineY)
+      // 数字と丸で1つの図形(丸)
+      const shape = { kind: 'circle', group: `circle-${index}` }
       created.push({
         ...base,
-        meta,
+        meta: { ...meta, shape },
         text: content.digits,
         transform: [1, 0, 0, 1, round(x, 3), round(y, 3)],
         fontSize: round(fit.fontSize / pxPerPt, 2),
@@ -195,7 +197,7 @@ export async function detectCircled(context: RereadContext, drafts: readonly Tex
         fieldCode: null,
         transform: [1, 0, 0, 1, 0, 0],
         tags: [],
-        meta: { source: CIRCLE_SOURCE, circled: content.number },
+        meta: { source: CIRCLE_SOURCE, circled: content.number, shape },
         // 右 → 上 → 左 → 下 の順(反時計回り)
         nodes: [
           node(cx + r, cy, [0, -k], [0, k]),

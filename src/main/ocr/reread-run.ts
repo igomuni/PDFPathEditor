@@ -475,7 +475,7 @@ export async function rereadCells(context: RereadContext, drafts: readonly TextD
     if (!star && (sizePt < MISSED_MIN_SIZE_RATIO * typicalSize || sizePt > MISSED_MAX_SIZE_RATIO * typicalSize)) return
     const draft: TextDraft = {
       ...base,
-      meta: { ocr: context.engineId, confidence: round(confidence, 2), missed: true },
+      meta: { ocr: context.engineId, confidence: round(confidence, 2), missed: true, ...(star ? { shape: { kind: 'star', group: `star-${picked.length}` } } : {}) },
       text,
       transform: [1, 0, 0, 1, round(m[0] * fit.originX + m[4], 3), round(m[3] * fit.baselineY + m[5], 3)],
       fontSize: round(fit.fontSize / pxPerPt, 2),

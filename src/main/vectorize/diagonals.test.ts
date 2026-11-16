@@ -3,7 +3,8 @@ import { test } from 'node:test'
 import type { GrayRaster } from '../../shared/vectorizer.ts'
 import { findSlantedShapes } from './diagonals.ts'
 import { detectLines } from './line-detector.ts'
-import { slantedToDrafts } from './slanted-paths.ts'
+import type { PathDraft } from '../../shared/vectorizer.ts'
+import { slantedToDrafts, tagRoundRects } from './slanted-paths.ts'
 
 function blank(width: number, height: number): GrayRaster {
   return { width, height, data: new Uint8Array(width * height).fill(255) }
@@ -69,4 +70,36 @@ test('角丸: 罫線の端につながる4分の1の円弧を見つけ、ベジ�
   assert.equal(draft.nodes[0].out![1], draft.nodes[0].y)
   assert.ok(draft.nodes[0].out![0] < draft.nodes[0].x)
   assert.equal(draft.nodes[1].in![0], draft.nodes[1].x)
+})
+
+test('角丸の枠: 角の円弧と、つながる罫線を同じグループにする。関係のない罫線には印を付けない', () => {
+  const rule = (x0: number, y0: number, x1: number, y1: number): PathDraft => ({
+    type: 'path',
+    role: 'frame',
+    fieldCode: null,
+    transform: [1, 0, 0, 1, 0, 0],
+    tags: [],
+    meta: {},
+    nodes: [
+      { x: x0, y: y0 },
+      { x: x1, y: y1 }
+    ],
+    closed: false,
+    fill: null,
+    stroke: '#000000',
+    strokeWidth: 0.7,
+    dash: null,
+    lineCap: 'butt'
+  })
+  const corner = (hx: number, hy: number, vx: number, vy: number): PathDraft => ({ ...rule(hx, hy, vx, vy), meta: { source: 'corner-detect' } })
+  // 枠 (100,100)-(300,200)、角の半径 10。上の辺と左右の辺、左上と右上の角
+  const lines = [rule(110, 200, 290, 200), rule(100, 100, 100, 190), rule(300, 100, 300, 190), rule(100, 150, 300, 150), rule(400, 100, 400, 190)]
+  const slanted = [corner(110, 200, 100, 190), corner(290, 200, 300, 190), { ...rule(100, 100, 300, 150), meta: { source: 'diagonal-detect' } }]
+  const tagged = tagRoundRects(lines, slanted)
+  const group = (draft: PathDraft): string | undefined => (draft.meta.shape as { group: string } | undefined)?.group
+  // 2つの角は上の辺を共有するので、同じ枠
+  assert.ok(group(tagged.slanted[0]) !== undefined && group(tagged.slanted[0]) === group(tagged.slanted[1]))
+  assert.deepEqual(tagged.lines.map((line) => group(line) === group(tagged.slanted[0])), [true, true, true, false, false])
+  assert.equal(group(tagged.slanted[2]), undefined)
+  assert.deepEqual((tagged.slanted[0].meta.shape as { kind: string }).kind, 'roundRect')
 })
