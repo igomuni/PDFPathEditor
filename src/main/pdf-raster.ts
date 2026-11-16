@@ -63,7 +63,11 @@ export async function renderPdfPage(data: Uint8Array, pageNumber: number, dpi: n
     const renderParams = { canvas, canvasContext: ctx, viewport } as unknown as Parameters<typeof page.render>[0]
     await page.render(renderParams).promise
 
-    const [x0, y0, x1, y1] = page.view
+    // ページが回転している(/Rotate 90・270)ときは、表示される向きの大きさをページの大きさにする。
+    // モデルの座標は「表示される向きのページ」の左下が原点(design.md §3-57)
+    const [vx0, vy0, vx1, vy1] = page.view
+    const turned = page.rotate % 180 !== 0
+    const [x0, y0, x1, y1] = turned ? [vx0, vy0, vx0 + (vy1 - vy0), vy0 + (vx1 - vx0)] : [vx0, vy0, vx1, vy1]
     const metadata = await doc.getMetadata()
     const info = metadata.info as { EncryptFilterName?: string | null }
     const permissions = await doc.getPermissions()
