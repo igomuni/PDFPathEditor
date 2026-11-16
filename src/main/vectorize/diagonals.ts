@@ -48,12 +48,12 @@ const ARC_TOLERANCE_PX = 2.2
 // 斜線の端を、元のインクに沿って伸ばす長さの上限
 const MAX_EXTEND_PX = 12
 
-interface Component {
+export interface Component {
   xs: number[]
   ys: number[]
 }
 
-function components(mask: Uint8Array, width: number, height: number): Component[] {
+export function components(mask: Uint8Array, width: number, height: number): Component[] {
   const seen = new Uint8Array(mask.length)
   const found: Component[] = []
   const stack: number[] = []

@@ -6,7 +6,7 @@ import { ContextMenu, type MenuItem } from './ContextMenu'
 import { DEFAULT_FONT_FAMILY, DEFAULT_FONT_WEIGHT } from '../../shared/fonts'
 import type { DocObject, ObjectRole, Rect, TextObject } from '../../shared/model'
 import { CIRCLE_SOURCE, type OcrEngineId, type OcrEngineInfo } from '../../shared/ocr'
-import { ARROW_SOURCE } from '../../shared/vectorizer'
+import { ARROW_SOURCE, BRACE_SOURCE } from '../../shared/vectorizer'
 import {
   addObjects,
   applyCorrections,
@@ -343,12 +343,12 @@ export function App() {
         const latest = store.getState().document
         // 罫線と矢印だけを入れ替える(記入欄と、丸数字の丸は残す)
         const isRule = (object: DocObject): boolean =>
-          object.type === 'path' && ((object.role === 'frame' && object.meta.source !== CIRCLE_SOURCE) || object.meta.source === ARROW_SOURCE)
+          object.type === 'path' && ((object.role === 'frame' && object.meta.source !== CIRCLE_SOURCE) || object.meta.source === ARROW_SOURCE || object.meta.source === BRACE_SOURCE)
         if (latest) store.execute(replaceObjectsWhere(latest, target.id, isRule, paths, '罫線を検出'))
         const arrows = paths.filter((path) => path.meta.source === ARROW_SOURCE && path.closed).length
         const count = (source: string): number => paths.filter((path) => path.meta.source === source).length
         setInfo(
-          `罫線 ${paths.filter((path) => path.meta.source !== ARROW_SOURCE).length} 本(うち斜線 ${count('diagonal-detect')} 本、角丸の角 ${count('corner-detect')} か所)、矢印 ${arrows} 個を見つけました。`
+          `罫線 ${paths.filter((path) => path.meta.source !== ARROW_SOURCE && path.meta.source !== BRACE_SOURCE).length} 本(うち斜線 ${count('diagonal-detect')} 本、角丸の角 ${count('corner-detect')} か所)、矢印 ${arrows} 個、波括弧 ${count(BRACE_SOURCE)} 個を見つけました。`
         )
       }),
     [run]

@@ -115,22 +115,12 @@ export function roundRectNodes(x: number, y: number, w: number, h: number, r: nu
 }
 
 /**
- * 波括弧(開いた Path)。上端 (x, top) から下端 (x, bottom) まで。depth は中央のとがりが出る向きと長さ
- * (負なら左へとがる「｛」、正なら右へとがる「｝」)。
+ * 波括弧(開いた Path、折れ線)。帳票の波括弧と同じ角ばった形: 縦の線 (x, top)〜(x, bottom) の上下に短いかぎ、中央に反対向きの突起。
+ * depth は突起の向きと長さ(正なら右へとがる「｝」、負なら左へとがる「｛」)。かぎは反対側へ同じ長さだけ出る。
  */
 export function braceNodes(x: number, top: number, bottom: number, depth: number): PathNode[] {
   const mid = (top + bottom) / 2
-  const quarter = (top - bottom) / 4
-  // 端は depth の半分だけ反対側に開き、中央で depth の半分だけとがる
-  const open = x - depth / 2
-  const tip = x + depth / 2
-  return [
-    node(open, top, { out: [x, top] }),
-    node(x, top - quarter * 0.9, { in: [x, top - quarter * 0.3], out: [x, mid + quarter * 0.5] }),
-    node(tip, mid, { in: [x, mid + quarter * 0.1], out: [x, mid - quarter * 0.1] }),
-    node(x, bottom + quarter * 0.9, { in: [x, mid - quarter * 0.5], out: [x, bottom + quarter * 0.3] }),
-    node(open, bottom, { in: [x, bottom] })
-  ]
+  return [node(x - depth, top), node(x, top), node(x, mid), node(x + depth, mid), node(x, mid), node(x, bottom), node(x - depth, bottom)]
 }
 
 /** 円(閉じた Path、4頂点) */

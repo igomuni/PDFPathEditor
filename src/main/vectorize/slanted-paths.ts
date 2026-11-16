@@ -1,6 +1,7 @@
 // 見つけた斜線と角丸の角(画素)を Path の候補にする(design.md §3-59)。どちらも罫線(role=frame)として持つ。
 import type { Matrix } from '../../shared/model.ts'
-import type { PathDraft } from '../../shared/vectorizer.ts'
+import { BRACE_SOURCE, type PathDraft } from '../../shared/vectorizer.ts'
+import type { Brace } from './braces.ts'
 import type { SlantedShapes } from './diagonals.ts'
 
 const round = (value: number): number => Math.round(value * 1000) / 1000
@@ -93,4 +94,39 @@ export function tagRoundRects(lines: readonly PathDraft[], slanted: readonly Pat
     for (const line of touching[i]) taggedLines[line] = { ...taggedLines[line], meta: { ...taggedLines[line].meta, shape: tag(i) } }
   })
   return { lines: taggedLines, slanted: taggedSlanted }
+}
+
+/**
+ * 波括弧を1本の折れ線の Path にする: かぎの先 → 上の角 → 中央 → 突起の先 → 中央 → 下の角 → かぎの先。
+ * 図形の印(brace)を付ける。
+ */
+export function bracesToDrafts(braces: readonly Brace[], pixelToPdf: Matrix): PathDraft[] {
+  const [a, b, c, d, e, f] = pixelToPdf
+  const toPdf = (x: number, y: number): { x: number; y: number } => ({ x: round(a * x + c * y + e), y: round(b * x + d * y + f) })
+  const pxToPt = Math.sqrt(Math.abs(a * d - b * c))
+  return braces.map(
+    (brace, index): PathDraft => ({
+      type: 'path',
+      role: 'other',
+      fieldCode: null,
+      transform: [1, 0, 0, 1, 0, 0],
+      tags: [],
+      meta: { source: BRACE_SOURCE, shape: { kind: 'brace', group: `brace-${index}` } },
+      nodes: [
+        toPdf(brace.hookX, brace.top),
+        toPdf(brace.x, brace.top),
+        toPdf(brace.x, brace.tipY),
+        toPdf(brace.tipX, brace.tipY),
+        toPdf(brace.x, brace.tipY),
+        toPdf(brace.x, brace.bottom),
+        toPdf(brace.hookX, brace.bottom)
+      ],
+      closed: false,
+      fill: null,
+      stroke: '#000000',
+      strokeWidth: Math.max(MIN_WIDTH, round(brace.thickness * pxToPt)),
+      dash: null,
+      lineCap: 'butt'
+    })
+  )
 }

@@ -5,9 +5,10 @@ import { loadRaster, pixelToPdfMatrix } from './raster'
 import { getVectorizer } from './vectorize'
 import { arrowsToDrafts, dropLinesOnArrows } from './vectorize/arrow-paths'
 import { findArrows } from './vectorize/arrows'
+import { findBraces } from './vectorize/braces'
 import { findSlantedShapes } from './vectorize/diagonals'
 import { detectLines } from './vectorize/line-detector'
-import { slantedToDrafts, tagRoundRects } from './vectorize/slanted-paths'
+import { bracesToDrafts, slantedToDrafts, tagRoundRects } from './vectorize/slanted-paths'
 
 async function vectorize(req: VectorizeRequest): Promise<PathDraft[]> {
   const vectorizer = getVectorizer(req.vectorizerId)
@@ -19,8 +20,10 @@ async function vectorize(req: VectorizeRequest): Promise<PathDraft[]> {
   // セルの斜線と、角丸の枠の角。矢印の軸(斜めのもの)と重なる斜線は外す
   const slanted = dropLinesOnArrows(slantedToDrafts(findSlantedShapes(raster, detectLines(raster)), pixelToPdf), arrows)
   // 角丸の枠は、角の円弧とつながる罫線を1つの図形としてまとめる
-  const tagged = tagRoundRects(dropLinesOnArrows(lines, arrows), slanted)
-  return [...tagged.lines, ...tagged.slanted, ...arrows]
+  // 波括弧。縦の線だけが罫線として取れていることがあるので、重なる罫線の候補は外す
+  const braces = bracesToDrafts(findBraces(raster), pixelToPdf)
+  const tagged = tagRoundRects(dropLinesOnArrows(dropLinesOnArrows(lines, arrows), braces), slanted)
+  return [...tagged.lines, ...tagged.slanted, ...arrows, ...braces]
 }
 
 process.parentPort.on('message', (event) => {

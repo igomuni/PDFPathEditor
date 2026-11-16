@@ -88,7 +88,7 @@ test('図形の頂点: 角丸の四角は8頂点、円は4頂点、波括弧は�
   const circle = circleNodes(50, 50, 10)
   assert.deepEqual(circle.map((n) => [n.x, n.y]), [[60, 50], [50, 60], [40, 50], [50, 40]])
   const brace = braceNodes(100, 200, 100, -6)
-  assert.deepEqual([brace[0].x, brace[0].y, brace[2].x, brace[2].y, brace[4].x, brace[4].y], [103, 200, 97, 150, 103, 100])
+  assert.deepEqual(brace.map((n) => [n.x, n.y]), [[106, 200], [100, 200], [100, 150], [94, 150], [100, 150], [100, 100], [106, 100]])
 })
 
 test('createShape: 図形ごとに新しいグループの印を付ける。矢印は軸と三角形、星は Text', () => {
