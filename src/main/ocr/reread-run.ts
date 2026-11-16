@@ -13,7 +13,7 @@ import type { DetectedLine } from '../vectorize/line-detector'
 import { recognize } from './engines'
 import { cleanText, fitText, type InkMetrics } from './postprocess'
 import { readGrid } from './grid-read'
-import { isStarShape, normalizeMissedText } from './missed'
+import { isOversizedMisfit, isStarShape, normalizeMissedText } from './missed'
 import { findCellPx, splitCell, type PixelRect, type RereadItem } from './reread'
 
 export interface RereadContext {
@@ -365,7 +365,11 @@ export async function rereadCells(context: RereadContext, drafts: readonly TextD
   // 読み直した列・行に重なっていた候補と、同じ枠の中で合っていなかった候補を外す
   const removed = new Set(done.flatMap(replacedBy))
   const kept = drafts.filter((_, i) => !removed.has(i))
-  const reread = [...kept, ...created]
+  // 大きすぎて背景と合っていない候補は捨てる(OCR が複数の行や列を1行として読んだもの。§3-58)。
+  // 捨てた場所のインクは、この後の拾い直しの対象になる
+  const allSizes = drafts.map((draft) => draft.fontSize).sort((p, q) => p - q)
+  const medianSize = allSizes.length > 0 ? allSizes[allSizes.length >> 1] : 0
+  const reread = [...kept, ...created].filter((draft) => isFixed(draft) || !isOversizedMisfit(draft.fontSize, medianSize, () => evaluate(draft).excess))
 
   // ---- 読み落としの拾い直し: どの候補にも対応しない小さなインクのまとまり(1字、記号)を、1つずつ読む
   const after = whiteCanvas(width, height)

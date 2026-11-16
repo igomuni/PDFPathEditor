@@ -5,6 +5,9 @@ import { loadRaster, pixelToPdfMatrix } from './raster'
 import { getVectorizer } from './vectorize'
 import { arrowsToDrafts, dropLinesOnArrows } from './vectorize/arrow-paths'
 import { findArrows } from './vectorize/arrows'
+import { findSlantedShapes } from './vectorize/diagonals'
+import { detectLines } from './vectorize/line-detector'
+import { slantedToDrafts } from './vectorize/slanted-paths'
 
 async function vectorize(req: VectorizeRequest): Promise<PathDraft[]> {
   const vectorizer = getVectorizer(req.vectorizerId)
@@ -13,7 +16,9 @@ async function vectorize(req: VectorizeRequest): Promise<PathDraft[]> {
   const lines = vectorizer.vectorize({ raster, pixelToPdf })
   // 矢印(吹き出しの細い線 + 先端の三角形)。軸と重なる罫線の候補は外す
   const arrows = arrowsToDrafts(findArrows(raster), pixelToPdf)
-  return [...dropLinesOnArrows(lines, arrows), ...arrows]
+  // セルの斜線と、角丸の枠の角。矢印の軸(斜めのもの)と重なる斜線は外す
+  const slanted = dropLinesOnArrows(slantedToDrafts(findSlantedShapes(raster, detectLines(raster)), pixelToPdf), arrows)
+  return [...dropLinesOnArrows(lines, arrows), ...slanted, ...arrows]
 }
 
 process.parentPort.on('message', (event) => {

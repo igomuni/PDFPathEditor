@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { isStarShape, MISSED_ALLOWED, normalizeMissedText } from './missed.ts'
+import { isOversizedMisfit, isStarShape, MISSED_ALLOWED, normalizeMissedText } from './missed.ts'
 
 test('拾い直した字: 1〜2字のかな・漢字・数字・記号だけを受け付け、記号を印字に近い字にそろえる', () => {
   assert.equal(normalizeMissedText('当'), '当')
@@ -27,4 +27,14 @@ test('星の形: ほぼ正方形で、3割ほどが塗られたまとまりだ�
   assert.equal(isStarShape(120, 60, Math.round(120 * 60 * 0.33), 20, 160), false)
   assert.equal(isStarShape(12, 12, 48, 20, 160), false)
   assert.equal(isStarShape(300, 300, 30000, 20, 160), false)
+})
+
+test('大きすぎる候補: ふつうの文字の2倍を超え、背景と合っていないものだけを捨てる', () => {
+  // 複数の行を1行として読んだもの
+  assert.equal(isOversizedMisfit(52.6, 7.5, () => 0.8), true)
+  // 表題(大きいが背景と合う)
+  assert.equal(isOversizedMisfit(26.7, 10.3, () => 0.1), false)
+  // ふつうの大きさの候補は、合っていなくても対象にしない(枠の読み直しで扱う)。合い具合も計算しない
+  assert.equal(isOversizedMisfit(9, 7.5, () => assert.fail('計算しない')), false)
+  assert.equal(isOversizedMisfit(30, 0, () => 1), false)
 })

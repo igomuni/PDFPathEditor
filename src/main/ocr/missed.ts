@@ -27,3 +27,16 @@ export function isStarShape(width: number, height: number, ink: number, minSize:
   const fill = ink / (width * height)
   return aspect >= 0.85 && aspect <= 1.25 && fill >= 0.24 && fill <= 0.42
 }
+
+// 大きすぎるとみなす、ページの文字の大きさの中央値に対する比と、背景に合わないインクの割合
+const OVERSIZE_RATIO = 2
+const OVERSIZE_MIN_EXCESS = 0.5
+
+/**
+ * 大きすぎて、背景とも合っていない候補か。ページのふつうの文字の 2 倍を超える大きさで、
+ * 描いたインクの半分以上が背景に対応しないもの。表題のような本当に大きい文字は、背景と合うので残る。
+ * excess は、大きい候補のときだけ計算する(描いて比べるので重い)。
+ */
+export function isOversizedMisfit(fontSize: number, medianSize: number, excess: () => number): boolean {
+  return medianSize > 0 && fontSize > OVERSIZE_RATIO * medianSize && excess() > OVERSIZE_MIN_EXCESS
+}

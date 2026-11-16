@@ -343,7 +343,10 @@ export function App() {
           object.type === 'path' && ((object.role === 'frame' && object.meta.source !== CIRCLE_SOURCE) || object.meta.source === ARROW_SOURCE)
         if (latest) store.execute(replaceObjectsWhere(latest, target.id, isRule, paths, '罫線を検出'))
         const arrows = paths.filter((path) => path.meta.source === ARROW_SOURCE && path.closed).length
-        setInfo(`罫線 ${paths.filter((path) => path.meta.source !== ARROW_SOURCE).length} 本、矢印 ${arrows} 個を見つけました。`)
+        const count = (source: string): number => paths.filter((path) => path.meta.source === source).length
+        setInfo(
+          `罫線 ${paths.filter((path) => path.meta.source !== ARROW_SOURCE).length} 本(うち斜線 ${count('diagonal-detect')} 本、角丸の角 ${count('corner-detect')} か所)、矢印 ${arrows} 個を見つけました。`
+        )
       }),
     [run]
   )
